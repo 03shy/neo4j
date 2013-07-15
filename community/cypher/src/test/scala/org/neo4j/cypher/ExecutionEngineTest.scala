@@ -21,7 +21,6 @@ package org.neo4j.cypher
 
 import internal.commands._
 import expressions._
-import internal.commands._
 import org.junit.Assert._
 import scala.collection.JavaConverters._
 import org.junit.matchers.JUnitMatchers._
@@ -30,17 +29,18 @@ import org.junit.{Ignore, Test}
 import org.neo4j.test.ImpermanentGraphDatabase
 import util.Random
 import org.neo4j.kernel.{EmbeddedGraphDatabase, EmbeddedReadOnlyGraphDatabase, TopLevelTransaction}
+import org.neo4j.cypher.internal.commands.values.TokenType._
+import java.util.concurrent.TimeUnit
 
-
-class ExecutionEngineTest extends ExecutionEngineHelper {
+class ExecutionEngineTest extends ExecutionEngineHelper with StatisticsChecker {
 
   @Ignore
   @Test def assignToPathInsideForeachShouldWork() {
     val result = parseAndExecute(
 """start n=node(0)
-foreach(x in [1,2,3] :
+foreach(x in [1,2,3] |
   create p = ({foo:x})-[:X]->()
-  foreach( i in p :
+  foreach( i in p |
     set i.touched = true))""")
     println(result.dumpToString())
   }
@@ -78,7 +78,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("node", n1.getId, n2.getId)).
-      where(RegularExpression(Property(Identifier("node"), "name"), Literal("And.*"))).
+      where(RegularExpression(Property(Identifier("node"), PropertyKey("name")), Literal("And.*"))).
       returns(ReturnItem(Identifier("node"), "node"))
 
     val result = execute(query)
@@ -135,7 +135,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("node", node.getId)).
-      returns(ReturnItem(Property(Identifier("node"), "name"), "node.name"))
+      returns(ReturnItem(Property(Identifier("node"), PropertyKey("name")), "node.name"))
 
     val result = execute(query)
     val list = result.columnAs[String]("node.name").toList
@@ -153,7 +153,7 @@ foreach(x in [1,2,3] :
     val query = Query.
       start(NodeById("start", start.getId)).
       matches(RelatedTo("start", "a", "rel", "x", Direction.BOTH)).
-      where(Equals(Property(Identifier("a"), "name"), Literal(name))).
+      where(Equals(Property(Identifier("a"), PropertyKey("name")), Literal(name))).
       returns(ReturnItem(Identifier("a"), "a"))
 
     val result = execute(query)
@@ -170,7 +170,7 @@ foreach(x in [1,2,3] :
     val query = Query.
       start(NodeById("start", start.getId)).
       matches(RelatedTo("start", "a", "r", "KNOWS", Direction.BOTH)).
-      where(Equals(Property(Identifier("r"), "name"), Literal("monkey"))).
+      where(Equals(Property(Identifier("r"), PropertyKey("name")), Literal("monkey"))).
       returns(ReturnItem(Identifier("a"), "a"))
 
     val result = execute(query)
@@ -330,8 +330,8 @@ foreach(x in [1,2,3] :
     val query = Query.
       start(NodeById("n", n1.getId, n2.getId)).
       where(Or(
-      Equals(Property(Identifier("n"), "name"), Literal("boy")),
-      Equals(Property(Identifier("n"), "name"), Literal("girl")))).
+      Equals(Property(Identifier("n"), PropertyKey("name")), Literal("boy")),
+      Equals(Property(Identifier("n"), PropertyKey("name")), Literal("girl")))).
       returns(ReturnItem(Identifier("n"), "n"))
 
     val result = execute(query)
@@ -346,8 +346,8 @@ foreach(x in [1,2,3] :
     val query = Query.
       start(NodeById("n", n1.getId, n2.getId)).
       where(Xor(
-      Equals(Property(Identifier("n"), "name"), Literal("boy")),
-      Equals(Property(Identifier("n"), "name"), Literal("girl")))).
+      Equals(Property(Identifier("n"), PropertyKey("name")), Literal("boy")),
+      Equals(Property(Identifier("n"), PropertyKey("name")), Literal("girl")))).
       returns(ReturnItem(Identifier("n"), "n"))
 
     val result = execute(query)
@@ -364,11 +364,11 @@ foreach(x in [1,2,3] :
       start(NodeById("n", n1.getId, n2.getId, n3.getId)).
       where(Or(
       And(
-        Equals(Property(Identifier("n"), "animal"), Literal("monkey")),
-        Equals(Property(Identifier("n"), "food"), Literal("banana"))),
+        Equals(Property(Identifier("n"), PropertyKey("animal")), Literal("monkey")),
+        Equals(Property(Identifier("n"), PropertyKey("food")), Literal("banana"))),
       And(
-        Equals(Property(Identifier("n"), "animal"), Literal("cow")),
-        Equals(Property(Identifier("n"), "food"), Literal("grass"))))).
+        Equals(Property(Identifier("n"), PropertyKey("animal")), Literal("cow")),
+        Equals(Property(Identifier("n"), PropertyKey("food")), Literal("grass"))))).
       returns(ReturnItem(Identifier("n"), "n"))
 
     val result = execute(query)
@@ -379,7 +379,7 @@ foreach(x in [1,2,3] :
   @Test def shouldBeAbleToOutputNullForMissingProperties() {
     val query = Query.
       start(NodeById("node", 0)).
-      returns(ReturnItem(Nullable(Property(Identifier("node"), "name")), "node.name?"))
+      returns(ReturnItem(Nullable(Property(Identifier("node"), PropertyKey("name"))), "node.name?"))
 
     val result = execute(query)
     assertEquals(List(Map("node.name?" -> null)), result.toList)
@@ -408,8 +408,8 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("n", n1.getId, n4.getId)).
-      matches(RelatedTo("n", "x", "rel", Seq(), Direction.OUTGOING, false)).
-      where(Equals(Property(Identifier("n"), "animal"), Property(Identifier("x"), "animal"))).
+      matches(RelatedTo("n", "x", "rel", Seq(), Direction.OUTGOING, optional = false)).
+      where(Equals(Property(Identifier("n"), PropertyKey("animal")), Property(Identifier("x"), PropertyKey("animal")))).
       returns(ReturnItem(Identifier("n"), "n"), ReturnItem(Identifier("x"), "x"))
 
     val result = execute(query)
@@ -430,7 +430,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("n", n1.getId, n2.getId, n3.getId, n4.getId, n5.getId)).
-      where(LessThan(Property(Identifier("n"), "x"), Literal(100))).
+      where(LessThan(Property(Identifier("n"), PropertyKey("x")), Literal(100))).
       returns(ReturnItem(Identifier("n"), "n"))
 
     val result = execute(query)
@@ -445,8 +445,8 @@ foreach(x in [1,2,3] :
     val query = Query.
       start(NodeById("n", n1.getId, n2.getId)).
       where(And(
-      LessThan(Property(Identifier("n"), "x"), Literal("Z")),
-      LessThan(Property(Identifier("n"), "x"), Literal('Z')))).
+      LessThan(Property(Identifier("n"), PropertyKey("x")), Literal("Z")),
+      LessThan(Property(Identifier("n"), PropertyKey("x")), Literal('Z')))).
       returns(ReturnItem(Identifier("n"), "n"))
 
     val result = execute(query)
@@ -517,7 +517,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("start", nodeIds: _*)).
-      orderBy(SortItem(Property(Identifier("start"), "name"), true)).
+      orderBy(SortItem(Property(Identifier("start"), PropertyKey("name")), ascending = true)).
       skip(2).
       returns(ReturnItem(Identifier("start"), "start"))
 
@@ -531,7 +531,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("start", nodeIds: _*)).
-      orderBy(SortItem(Property(Identifier("start"), "name"), true)).
+      orderBy(SortItem(Property(Identifier("start"), PropertyKey("name")), ascending = true)).
       skip("skippa").
       returns(ReturnItem(Identifier("start"), "start"))
 
@@ -545,7 +545,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("start", nodeIds: _*)).
-      orderBy(SortItem(Property(Identifier("start"), "name"), true)).
+      orderBy(SortItem(Property(Identifier("start"), PropertyKey("name")), ascending =  true)).
       limit(2).
       skip(2).
       returns(ReturnItem(Identifier("start"), "start"))
@@ -560,7 +560,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("start", nodeIds: _*)).
-      orderBy(SortItem(Property(Identifier("start"), "name"), true)).
+      orderBy(SortItem(Property(Identifier("start"), PropertyKey("name")), ascending = true)).
       limit("l").
       skip("s").
       returns(ReturnItem(Identifier("start"), "start"))
@@ -592,8 +592,8 @@ foreach(x in [1,2,3] :
       aggregation(CountStar()).
       orderBy(
       SortItem(CountStar(), false),
-      SortItem(Property(Identifier("n"), "division"), true)).
-      returns(ReturnItem(Property(Identifier("n"), "division"), "n.division"), ReturnItem(CountStar(), "count(*)"))
+      SortItem(Property(Identifier("n"), PropertyKey("division")), ascending = true)).
+      returns(ReturnItem(Property(Identifier("n"), PropertyKey("division")), "n.division"), ReturnItem(CountStar(), "count(*)"))
 
     val result = execute(query)
 
@@ -637,7 +637,7 @@ foreach(x in [1,2,3] :
     val query = Query.
       start(NodeById("node", n1.getId, n2.getId, n3.getId)).
       aggregation(CountStar()).
-      returns(ReturnItem(Property(Identifier("node"), "x"), "node.x"), ReturnItem(CountStar(), "count(*)"))
+      returns(ReturnItem(Property(Identifier("node"), PropertyKey("x")), "node.x"), ReturnItem(CountStar(), "count(*)"))
 
     val result = execute(query)
 
@@ -885,11 +885,13 @@ foreach(x in [1,2,3] :
 
     val result = execute(query).toList.head("p").asInstanceOf[Path]
 
-    val number_of_relationships_in_path = result.length()
-    assert(number_of_relationships_in_path === 1)
-    assert(result.startNode() === node("A"))
-    assert(result.endNode() === node("B"))
-    assert(result.lastRelationship() === r1)
+    graph.inTx {
+      val number_of_relationships_in_path = result.length()
+      assert(number_of_relationships_in_path === 1)
+      assert(result.startNode() === node("A"))
+      assert(result.endNode() === node("B"))
+      assert(result.lastRelationship() === r1)
+    }
   }
 
   @Test def shouldReturnShortestPathUnboundLength() {
@@ -957,7 +959,7 @@ foreach(x in [1,2,3] :
 
     val query = Query.
       start(NodeById("a", 1)).
-      where(Equals(Property(Identifier("a"), "name"), ParameterExpression("name")))
+      where(Equals(Property(Identifier("a"), PropertyKey("name")), ParameterExpression("name")))
       .returns(ReturnItem(Identifier("a"), "a"))
 
     assert(0 === execute(query, "name" -> "Tobias").toList.size)
@@ -1691,9 +1693,9 @@ RETURN x0.name?
     val b = createNode("foo" -> 3)
     val r = relate(a, b, "rel", Map("foo" -> 2))
 
-    val result = parseAndExecute("start a=node(1) match p=a-->() return filter(x in p : x.foo = 2)").toList
+    val result = parseAndExecute("start a=node(1) match p=a-->() return filter(x in p WHERE x.foo = 2)").toList
 
-    val resultingCollection = result.head("filter(x in p : x.foo = 2)").asInstanceOf[Seq[_]].toList
+    val resultingCollection = result.head("filter(x in p WHERE x.foo = 2)").asInstanceOf[Seq[_]].toList
 
     assert(List(r) == resultingCollection)
   }
@@ -1741,7 +1743,7 @@ RETURN x0.name?
     // START x = node(1) WITH x WHERE x.foo = 42 RETURN x
     val secondQ = Query.
       start().
-      where(Equals(Property(Identifier("x"), "foo"), Literal(42))).
+      where(Equals(Property(Identifier("x"), PropertyKey("foo")), Literal(42))).
       returns(ReturnItem(Identifier("x"), "x"))
 
     val q = Query.
@@ -1896,7 +1898,7 @@ RETURN x0.name?
 
   @Test def length_on_filter() {
     // https://github.com/neo4j/community/issues/526
-    val q = "start n=node(*) match n-[r?]->m return length(filter(x in collect(r) : x <> null)) as cn"
+    val q = "start n=node(*) match n-[r?]->m return length(filter(x in collect(r) WHERE x <> null)) as cn"
 
     assert(executeScalar[Long](q) === 0)
   }
@@ -2045,7 +2047,7 @@ RETURN x0.name?
     relate(a,b)
     relate(a,c)
 
-    val result = parseAndExecute("CYPHER 1.9 START a=node(1) foreach(n in extract(p in a-->() : last(p)) : set n.touched = true) return a-->()").dumpToString()
+    val result = parseAndExecute("CYPHER 1.9 START a=node(1) foreach(n in extract(p in a-->() | last(p)) | set n.touched = true) return a-->()").dumpToString()
   }
 
   @Test
@@ -2122,7 +2124,7 @@ RETURN x0.name?
 
     assert(result.size === 1)
     assert(result(0)("c").asInstanceOf[Long] === 0)
-    assert(result(0)("x").asInstanceOf[Node].getProperty("name") === id)
+    assertInTx(result(0)("x").asInstanceOf[Node].getProperty("name") === id)
   }
 
   @Test
@@ -2132,7 +2134,7 @@ RETURN x0.name?
     val result = parseAndExecute("start n=node({id}) with n set n.foo={id} return n", "id" -> id).toList
 
     assert(result.size === 1)
-    assert(result(0)("n").asInstanceOf[Node].getProperty("foo") === id)
+    assertInTx(result(0)("n").asInstanceOf[Node].getProperty("foo") === id)
   }
 
   @Ignore("This pattern is currently not supported. Revisit when we do support it.")
@@ -2305,7 +2307,7 @@ RETURN x0.name?
 
   @Test
   def can_use_identifiers_created_inside_the_foreach() {
-    val result = parseAndExecute("start n=node(0) foreach (x in [1,2,3] : create (a { name: 'foo'})  set a.id = x)")
+    val result = parseAndExecute("start n=node(0) foreach (x in [1,2,3] | create (a { name: 'foo'})  set a.id = x)")
 
     assert(result.toList === List())
   }
@@ -2346,7 +2348,7 @@ RETURN x0.name?
   def extract_string_from_node_collection() {
     val a = createNode("name"->"a")
 
-    val result = parseAndExecute("""START n=node(1) with collect(n) as nodes return head(extract(x in nodes: x.name)) + "test" as test """)
+    val result = parseAndExecute("""START n=node(1) with collect(n) as nodes return head(extract(x in nodes | x.name)) + "test" as test """)
 
     assert(result.toList === List(Map("test" -> "atest")))
   }
@@ -2534,11 +2536,13 @@ RETURN x0.name?
     parseAndExecute(s"""CREATE INDEX ON :${labelName}(${propertyKeys.reduce(_ ++ "," ++ _)})""")
 
     // THEN
-    val indexDefinitions = graph.schema().getIndexes(DynamicLabel.label(labelName)).asScala.toSet
-    assert(1 === indexDefinitions.size)
+    graph.inTx {
+      val indexDefinitions = graph.schema().getIndexes(DynamicLabel.label(labelName)).asScala.toSet
+      assert(1 === indexDefinitions.size)
 
-    val actual = indexDefinitions.head.getPropertyKeys.asScala.toSeq
-    assert(propertyKeys == actual)
+      val actual = indexDefinitions.head.getPropertyKeys.asScala.toSeq
+      assert(propertyKeys == actual)
+    }
   }
 
   @Test def should_not_create_existing_index() {
@@ -2781,5 +2785,29 @@ RETURN x0.name?
     val query = "match (n)-->(x) return n"
 
     assert(engine.prettify(query) === String.format("MATCH (n)-->(x)%nRETURN n"))
+  }
+
+  @Test
+  def should_not_see_updates_created_by_itself() {
+
+    timeOutIn(5, TimeUnit.SECONDS) {
+      val result = parseAndExecute("start n=node(*) create ()")
+      assert(result.toList === List())
+    }
+  }
+
+  @Test
+  def doctest_gone_wild() {
+    // given
+    parseAndExecute("CREATE (n:Actor {name:'Tom Hanks'})")
+
+    // when
+    val result = parseAndExecute("""MATCH (actor:Actor)
+                               WHERE actor.name = "Tom Hanks"
+                               CREATE (movie:Movie {title:'Sleepless in Seattle'})
+                               CREATE (actor)-[:ACTED_IN]->(movie)""")
+
+    // then
+    assertStats(result, nodesCreated = 1, propertiesSet = 1, labelsAdded = 1, relationshipsCreated = 1)
   }
 }

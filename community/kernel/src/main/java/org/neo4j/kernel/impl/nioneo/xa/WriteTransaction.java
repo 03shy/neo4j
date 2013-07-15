@@ -43,6 +43,7 @@ import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.helpers.Exceptions;
 import org.neo4j.helpers.Pair;
 import org.neo4j.kernel.api.KernelAPI;
+import org.neo4j.kernel.api.exceptions.schema.MalformedSchemaRuleException;
 import org.neo4j.kernel.api.index.NodePropertyUpdate;
 import org.neo4j.kernel.api.properties.Property;
 import org.neo4j.kernel.impl.api.index.IndexingService;
@@ -74,6 +75,7 @@ import org.neo4j.kernel.impl.nioneo.store.RelationshipTypeTokenRecord;
 import org.neo4j.kernel.impl.nioneo.store.RelationshipTypeTokenStore;
 import org.neo4j.kernel.impl.nioneo.store.SchemaRule;
 import org.neo4j.kernel.impl.nioneo.store.SchemaStore;
+import org.neo4j.kernel.impl.nioneo.xa.Command.Mode;
 import org.neo4j.kernel.impl.nioneo.xa.Command.NodeCommand;
 import org.neo4j.kernel.impl.nioneo.xa.Command.PropertyCommand;
 import org.neo4j.kernel.impl.nioneo.xa.Command.SchemaRuleCommand;
@@ -88,9 +90,11 @@ import org.neo4j.kernel.impl.util.RelIdArray.DirectionWrapper;
 
 import static java.util.Arrays.binarySearch;
 
+import static org.neo4j.helpers.Exceptions.launderedException;
 import static org.neo4j.helpers.collection.IteratorUtil.asIterator;
 import static org.neo4j.helpers.collection.IteratorUtil.first;
 import static org.neo4j.kernel.impl.nioneo.store.PropertyStore.encodeString;
+import static org.neo4j.kernel.impl.nioneo.store.labels.NodeLabelsField.parseLabelsField;
 import static org.neo4j.kernel.impl.nioneo.xa.Command.Mode.CREATE;
 import static org.neo4j.kernel.impl.nioneo.xa.Command.Mode.DELETE;
 import static org.neo4j.kernel.impl.nioneo.xa.Command.Mode.UPDATE;
@@ -692,7 +696,6 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
             }
 
             // primitives
-//            java.util.Collections.sort( nodeCommands, sorter ); // it's a TreeMap so already sorted.
             java.util.Collections.sort( relCommands, sorter );
             java.util.Collections.sort( propCommands, sorter );
             executeCreated( isRecovered, propCommands, relCommands, nodeCommands.values() );
@@ -773,13 +776,13 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
                 NodeCommand nodeChanges = nodeCommands.get( after.getNodeId() );
                 if ( nodeChanges != null )
                 {
-                    nodeLabelsBefore = nodeStore.getLabelsForNode( nodeChanges.getBefore() );
-                    nodeLabelsAfter = nodeStore.getLabelsForNode( nodeChanges.getAfter() );
+                    nodeLabelsBefore = parseLabelsField( nodeChanges.getBefore() ).get( nodeStore );
+                    nodeLabelsAfter = parseLabelsField( nodeChanges.getAfter() ).get( nodeStore );
                 }
                 else
                 {
-                    nodeLabelsBefore = nodeLabelsAfter = nodeStore
-                            .getLabelsForNode( nodeStore.getRecord( after.getNodeId() ) );
+                    nodeLabelsBefore = nodeLabelsAfter =
+                            parseLabelsField( nodeStore.getRecord( after.getNodeId() ) ).get( nodeStore );
                 }
 
                 for ( NodePropertyUpdate update :
@@ -797,9 +800,16 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
         final NodeStore nodeStore = getNodeStore();
         for ( NodeCommand nodeCommand : nodeCommands.values() )
         {
+            if ( nodeCommand.getMode() != Mode.UPDATE )
+            {
+                // For created and deleted nodes rely on the updates from the perspective of properties to cover it all
+                // otherwise we'll get duplicate update during recovery, or cannot load properties if deleted.
+                continue;
+            }
+
             long nodeId = nodeCommand.getKey();
-            long[] labelsBefore = nodeStore.getLabelsForNode( nodeCommand.getBefore() );
-            long[] labelsAfter = nodeStore.getLabelsForNode( nodeCommand.getAfter() );
+            long[] labelsBefore = parseLabelsField( nodeCommand.getBefore() ).get( nodeStore );
+            long[] labelsAfter = parseLabelsField( nodeCommand.getAfter() ).get( nodeStore );
             // They are sorted in the store
 
             for ( long labelAfter : labelsAfter )
@@ -1260,21 +1270,21 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
         NodeRecord node = nodeRecords.getOrLoad( nodeId, null ).forReadingLinkage();
         return loadPropertyValue( node, propertyKey );
     }
-    
+
     @Override
     public Object relationshipLoadPropertyValue( long relationshipId, int propertyKey )
     {
         RelationshipRecord relationship = relRecords.getOrLoad( relationshipId, null ).forReadingLinkage();
         return loadPropertyValue( relationship, propertyKey );
     }
-    
+
     @Override
     public Object graphLoadPropertyValue( int propertyKey )
     {
         NeoStoreRecord record = getOrLoadNeoStoreRecord().forReadingLinkage();
         return loadPropertyValue( record, propertyKey );
     }
-    
+
     private <P extends PrimitiveRecord> Object loadPropertyValue( P primitive, int propertyKey )
     {
         long propertyRecordId = // propertyData.getId();
@@ -1410,7 +1420,7 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
         }
         return primitiveChangeProperty( node, propertyKey, value );
     }
-    
+
     /**
      * TODO MP: itroduces performance regression
      * This method was introduced during moving handling of entity properties from NodeImpl/RelationshipImpl
@@ -2065,7 +2075,15 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
 
     private SchemaRule deserializeSchemaRule( long ruleId, Collection<DynamicRecord> records )
     {
-        return SchemaRule.Kind.deserialize( ruleId, AbstractDynamicStore.concatData( records, new byte[100] ) );
+        try
+        {
+            return SchemaRule.Kind.deserialize( ruleId, AbstractDynamicStore.concatData( records, new byte[100] ) );
+        }
+        catch ( MalformedSchemaRuleException e )
+        {
+            // TODO This is bad
+            throw launderedException( e );
+        }
     }
 
     private void addSchemaRule( Pair<Collection<DynamicRecord>, SchemaRule> schemaRule )
@@ -2077,17 +2095,14 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
     public void addLabelToNode( long labelId, long nodeId )
     {
         NodeRecord nodeRecord = nodeRecords.getOrLoad( nodeId, null ).forChangingData();
-        NodeLabelRecordLogic manipulator = new NodeLabelRecordLogic( nodeRecord, getNodeStore() );
-        manipulator.add( labelId );
+        parseLabelsField( nodeRecord ).add( labelId, getNodeStore() );
     }
 
     @Override
     public void removeLabelFromNode( long labelId, long nodeId )
     {
         NodeRecord nodeRecord = nodeRecords.getOrLoad( nodeId, null ).forChangingData();
-        NodeLabelRecordLogic manipulator = new NodeLabelRecordLogic( nodeRecord,
-                                                                     getNodeStore() );
-        manipulator.remove( labelId );
+        parseLabelsField( nodeRecord ).remove( labelId, getNodeStore() );
     }
 
     @Override
@@ -2095,7 +2110,7 @@ public class WriteTransaction extends XaTransaction implements NeoStoreTransacti
     {
         // Don't consider changes in this transaction
         NodeRecord node = getNodeStore().getRecord( nodeId );
-        return asIterator( getNodeStore().getLabelsForNode( node ) );
+        return asIterator( parseLabelsField( node ).get( getNodeStore() ) );
     }
 
     @Override

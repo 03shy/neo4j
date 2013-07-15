@@ -51,7 +51,7 @@
   <packaging>jar</packaging>
 
   <scm>
-    <url>https://github.com/neo4j/community/tree/master/kernel</url>
+	  <url>https://github.com/neo4j/neo4j/tree/master/community/kernel</url>
   </scm>
 
   <licenses>
@@ -429,6 +429,16 @@ public class ComponentVersion extends Version
     <dependency>
       <groupId>org.mockito</groupId>
       <artifactId>mockito-all</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.powermock</groupId>
+      <artifactId>powermock-module-junit4</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.powermock</groupId>
+      <artifactId>powermock-api-mockito</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>

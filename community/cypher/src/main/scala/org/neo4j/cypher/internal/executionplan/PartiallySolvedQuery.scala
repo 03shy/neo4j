@@ -27,7 +27,6 @@ import org.neo4j.helpers.ThisShouldNotHappenError
 import org.neo4j.cypher.internal.pipes.Pipe
 import org.neo4j.cypher.internal.mutation.UpdateAction
 import org.neo4j.cypher.internal.symbols.SymbolTable
-import scala._
 import org.neo4j.cypher.internal.commands.NamedPath
 import org.neo4j.cypher.internal.commands.ReturnItem
 import org.neo4j.cypher.internal.commands.SortItem
@@ -42,27 +41,10 @@ object PartiallySolvedQuery {
   def apply(q: Query): PartiallySolvedQuery = {
     val patterns = q.matching.map(Unsolved(_))
 
-    val items: Seq[StartItem] = q.start ++ q.hints
-
-    /*
-    TODO: This is an intermediate step. We're storing the MergeAst objects in the Start clause for now.
-    There is probably a better place to store those items than there.
-     */
-    val newStart: Seq[QueryToken[StartItem]] = items.collect {
-      case startItem: StartItem if !startItem.isInstanceOf[MergeAst] => Unsolved(startItem)
-    }
-
-    val newUpdates: Seq[QueryToken[UpdateAction]] = items.collect {
-      case startItem : MergeAst =>
-        val updateActions: Seq[UpdateAction] = startItem.nextStep()
-        updateActions.map(Unsolved(_))
-    }.flatten
-
-
     new PartiallySolvedQuery(
       returns = q.returns.returnItems.map(Unsolved(_)),
-      start = newStart,
-      updates = q.updatedCommands.map(Unsolved(_)) ++ newUpdates,
+      start = (q.start ++ q.hints).map(Unsolved(_)),
+      updates = q.updatedCommands.map(Unsolved(_)),
       patterns = patterns,
       where = q.where.atoms.map(Unsolved(_)),
       aggregation = q.aggregation.toSeq.flatten.map(Unsolved(_)),
@@ -201,6 +183,8 @@ case class PartiallySolvedQuery(returns: Seq[QueryToken[ReturnColumn]],
 
     returnExpressions ++ wherePredicates ++ aggregateExpressions ++ sortExpressions ++ tailNodes ++ startItems ++ patternsX
   }
+
+  def containsUpdates = start.exists(_.token.mutating) || updates.nonEmpty
 }
 
 case class  ExecutionPlanInProgress(query: PartiallySolvedQuery, pipe: Pipe, isUpdating: Boolean=false)

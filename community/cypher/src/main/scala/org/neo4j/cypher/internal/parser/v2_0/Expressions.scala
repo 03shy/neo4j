@@ -22,8 +22,9 @@ package org.neo4j.cypher.internal.parser.v2_0
 import org.neo4j.cypher.internal.commands._
 import expressions._
 import org.neo4j.cypher.SyntaxException
-import org.neo4j.cypher.internal.parser.AbstractPattern
+import org.neo4j.cypher.internal.parser.{No, Maybe, Yes, AbstractPattern}
 import org.neo4j.cypher.internal.HasOptionalDefault
+import org.neo4j.cypher.internal.commands.values.TokenType.PropertyKey
 
 trait Expressions extends Base with ParserPattern with Predicates with StringLiteral {
   def expression: Parser[Expression] = term ~ rep("+" ~ term | "-" ~ term) ^^ {
@@ -90,7 +91,7 @@ trait Expressions extends Base with ParserPattern with Predicates with StringLit
   def collectionLiteral: Parser[Expression] = "[" ~> repsep(expression, ",") <~ "]" ^^ (seq => Collection(seq: _*))
 
   def property: Parser[Expression] = identity ~ "." ~ escapableString ^^ {
-    case v ~ "." ~ p => Property(Identifier(v), p)
+    case v ~ "." ~ p => Property(Identifier(v), PropertyKey(p))
   }
 
   private val message = "Cypher does not support != for inequality comparisons. " +
@@ -102,12 +103,12 @@ trait Expressions extends Base with ParserPattern with Predicates with StringLit
     property <~ "?" ^^ (p => new Nullable(p) with DefaultTrue) |
     property <~ "!" ^^ (p => new Nullable(p) with DefaultFalse)
 
-  def extract: Parser[Expression] = EXTRACT ~> parens(identity ~ IN ~ expression ~ ":" ~ expression) ^^ {
-    case (id ~ in ~ iter ~ ":" ~ expression) => ExtractFunction(iter, id, expression)
+  def extract: Parser[Expression] = EXTRACT ~> parens(identity ~ IN ~ expression ~ (":" | "|") ~ expression) ^^ {
+    case (id ~ _ ~ iter ~ _ ~ expression) => ExtractFunction(iter, id, expression)
   }
 
-  def reduce: Parser[Expression] = REDUCE ~> parens(identity ~ "=" ~ expression ~ "," ~ identity ~ IN ~ expression ~ ":" ~ expression) ^^ {
-    case (acc ~ "=" ~ init ~ "," ~ id ~ in ~ iter ~ ":" ~ expression) => ReduceFunction(iter, id, expression, acc, init)
+  def reduce: Parser[Expression] = REDUCE ~> parens(identity ~ "=" ~ expression ~ "," ~ identity ~ IN ~ expression ~ (":" | "|") ~ expression) ^^ {
+    case (acc ~ _ ~ init ~ _ ~ id ~ _ ~ iter ~ _ ~ expression) => ReduceFunction(iter, id, expression, acc, init)
   }
 
   def coalesceFunc: Parser[Expression] = COALESCE ~> parens(commaList(expression)) ^^ {

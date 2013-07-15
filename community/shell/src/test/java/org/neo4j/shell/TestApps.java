@@ -20,7 +20,6 @@
 package org.neo4j.shell;
 
 import java.io.Serializable;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -33,30 +32,29 @@ import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.graphdb.RelationshipType;
-import org.neo4j.graphdb.ResourceIterable;
-import org.neo4j.graphdb.ResourceIterator;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.schema.IndexDefinition;
 import org.neo4j.graphdb.schema.Schema.IndexState;
-import org.neo4j.helpers.Function;
-import org.neo4j.helpers.collection.Iterables;
 import org.neo4j.shell.impl.CollectingOutput;
 import org.neo4j.shell.impl.SameJvmClient;
 import org.neo4j.shell.kernel.GraphDatabaseShellServer;
 
-import static java.util.concurrent.TimeUnit.SECONDS;
-
+import static org.hamcrest.core.IsNot.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import static org.neo4j.graphdb.Direction.OUTGOING;
 import static org.neo4j.graphdb.DynamicLabel.label;
 import static org.neo4j.graphdb.DynamicRelationshipType.withName;
-import static org.neo4j.helpers.collection.IteratorUtil.asSet;
-import static org.neo4j.helpers.collection.IteratorUtil.emptySetOf;
+import static org.neo4j.graphdb.Neo4jMatchers.findNodesByLabelAndProperty;
+import static org.neo4j.graphdb.Neo4jMatchers.hasLabels;
+import static org.neo4j.graphdb.Neo4jMatchers.hasProperty;
+import static org.neo4j.graphdb.Neo4jMatchers.hasSize;
+import static org.neo4j.graphdb.Neo4jMatchers.inTx;
+import static org.neo4j.graphdb.Neo4jMatchers.waitForIndex;
 import static org.neo4j.helpers.collection.MapUtil.genericMap;
 
 public class TestApps extends AbstractShellTest
@@ -117,14 +115,13 @@ public class TestApps extends AbstractShellTest
         int age = 31;
         executeCommand( "set age -t int " + age );
         executeCommand( "set \"some property\" -t long[] \"[1234,5678]" );
-        assertEquals( name, node.getProperty( "name" ) );
-        assertEquals( age, node.getProperty( "age" ) );
-        long[] value = (long[]) node.getProperty( "some property" );
-        assertTrue( Arrays.equals( new long[]{1234L, 5678L}, value ) );
+        assertThat( node, inTx( db, hasProperty( "name" ).withValue( name ) ) );
+        assertThat( node, inTx( db, hasProperty( "age" ).withValue( age ) ) );
+        assertThat( node, inTx( db, hasProperty( "some property" ).withValue( new long[]{1234L, 5678L} ) ) );
 
         executeCommand( "rm age" );
-        assertNull( node.getProperty( "age", null ) );
-        assertEquals( name, node.getProperty( "name" ) );
+        assertThat( node, inTx( db, not( hasProperty( "age" ) ) ) );
+        assertThat( node, inTx( db, hasProperty( "name" ).withValue( name ) ) );
     }
 
     @Test
@@ -147,15 +144,15 @@ public class TestApps extends AbstractShellTest
         // With properties
         executeCommand( "mkrel -ct " + type3.name() + " --np \"{'name':'Neo','destiny':'The one'}\" --rp \"{'number':11}\"" );
         Relationship thirdRelationship = db.getReferenceNode().getSingleRelationship( type3, Direction.OUTGOING );
-        assertEquals( 11, thirdRelationship.getProperty( "number" ) );
+        assertThat( thirdRelationship, inTx( db, hasProperty( "number" ).withValue( 11 ) ) );
         Node thirdNode = thirdRelationship.getEndNode();
-        assertEquals( "Neo", thirdNode.getProperty( "name" ) );
-        assertEquals( "The one", thirdNode.getProperty( "destiny" ) );
+        assertThat( thirdNode, inTx( db, hasProperty( "name" ).withValue( "Neo" ) ) );
+        assertThat( thirdNode, inTx( db, hasProperty( "destiny" ).withValue( "The one" ) ) );
         executeCommand( "cd -r " + thirdRelationship.getId() );
         executeCommand( "mv number other-number" );
-        assertNull( thirdRelationship.getProperty( "number", null ) );
-        assertEquals( 11, thirdRelationship.getProperty( "other-number" ) );
-        
+        assertThat( thirdRelationship, inTx( db, not( hasProperty( "number" ) ) ) );
+        assertThat( thirdRelationship, inTx( db, hasProperty( "other-number" ).withValue( 11 ) ) );
+
         // Create and go to
         executeCommand( "cd end" );
         executeCommand( "mkrel -ct " + type1.name() + " --np \"{'name':'new'}\" --cd" );
@@ -360,29 +357,30 @@ public class TestApps extends AbstractShellTest
     public void createNodeWithArrayProperty() throws Exception
     {
         executeCommand( "mknode --np \"{'values':[1,2,3,4]}\" --cd" );
-        assertTrue( Arrays.equals( new int[] {1,2,3,4}, (int[]) getCurrentNode().getProperty( "values" ) ) );
+        assertThat( getCurrentNode(), inTx( db, hasProperty( "values" ).withValue( new int[] {1,2,3,4} ) ) );
     }
     
     @Test
     public void createNodeWithLabel() throws Exception
     {
         executeCommand( "mknode --cd -l Person" );
-        assertEquals( asSet( "Person" ), asSet( names( getCurrentNode().getLabels() ) ) );
+        assertThat( getCurrentNode(), inTx( db, hasLabels( "Person" ) ) );
     }
     
     @Test
     public void createNodeWithColonPrefixedLabel() throws Exception
     {
         executeCommand( "mknode --cd -l :Person" );
-        assertEquals( asSet( "Person" ), asSet( names( getCurrentNode().getLabels() ) ) );
+        assertThat( getCurrentNode(), inTx( db, hasLabels( "Person" ) ) );
     }
     
     @Test
     public void createNodeWithPropertiesAndLabels() throws Exception
     {
         executeCommand( "mknode --cd --np \"{'name': 'Test'}\" -l \"['Person', ':Thing']\"" );
-        assertEquals( "Test", getCurrentNode().getProperty( "name" ) );
-        assertEquals( asSet( "Person", "Thing" ), asSet( names( getCurrentNode().getLabels() ) ) );
+
+        assertThat( getCurrentNode(), inTx( db, hasProperty( "name" ).withValue( "Test" ) ) );
+        assertThat( getCurrentNode(), inTx( db, hasLabels( "Person", "Thing" ) ) );
     }
     
     @Test
@@ -390,8 +388,8 @@ public class TestApps extends AbstractShellTest
     {
         String type = "ARRAY";
         executeCommand( "mkrel -ct " + type + " --rp \"{'values':[1,2,3,4]}\"" );
-        assertTrue( Arrays.equals( new int[] {1,2,3,4},
-                (int[]) getCurrentNode().getSingleRelationship( withName( type ), OUTGOING ).getProperty( "values" ) ) );
+        assertThat( getCurrentNode().getSingleRelationship( withName( type ), OUTGOING ), inTx( db, hasProperty(
+                "values" ).withValue( new int[] {1,2,3,4} ) ) );
     }
     
     @Test
@@ -399,8 +397,8 @@ public class TestApps extends AbstractShellTest
     {
         String type = "TEST";
         executeCommand( "mkrel -ctl " + type + " Person" );
-        assertEquals( asSet( "Person" ), asSet( names( getCurrentNode().getSingleRelationship(
-                withName( type ), OUTGOING ).getEndNode().getLabels() ) ) );
+        assertThat( getCurrentNode().getSingleRelationship(
+                withName( type ), OUTGOING ).getEndNode(), inTx( db, hasLabels( "Person" ) ) );
     }
     
     @Test
@@ -448,7 +446,7 @@ public class TestApps extends AbstractShellTest
         executeCommand( "export a=true" );
         executeCommand( "export b=100" );
         executeCommand( "export c=\"foo\"" );
-        executeCommand( "env", "a=true", "b=100", "c=\"foo\"" );
+        executeCommand( "env", "a=true", "b=100", "c=foo" );
     }
 
     @Test
@@ -493,13 +491,8 @@ public class TestApps extends AbstractShellTest
     public void use_cypher_merge() throws Exception
     {
         executeCommand( "merge (n:Person {name:'Andres'});" );
-        ResourceIterable<Node> iter = db.findNodesByLabelAndProperty( label( "Person" ), "name", "Andres" );
-        ResourceIterator<Node> iterator = iter.iterator();
 
-
-        assertTrue("Did not find expected node", iterator.hasNext());
-        iterator.next();
-        assertFalse("MERGE seems to have created multiple nodes", iterator.hasNext());
+        assertThat( findNodesByLabelAndProperty( label( "Person" ), "name", "Andres", db ), hasSize( 1 ) );
     }
 
     @Test
@@ -553,6 +546,7 @@ public class TestApps extends AbstractShellTest
     {
         final DynamicRelationshipType type = DynamicRelationshipType.withName( "KNOWS" );
         createRelationshipChain( db.getReferenceNode(), type, 1 );
+        db.beginTx();
         executeCommand( "dump start n=node(0) match n-[r]->m return n,r,m;",
                 "begin",
                 "start _0 = node\\(0\\) with _0 ",
@@ -603,7 +597,7 @@ public class TestApps extends AbstractShellTest
         executeCommand( "set -l Person" );
         
         // THEN
-        assertEquals( asSet( "Person" ), asSet( names( node.getLabels() ) ) );
+        assertThat( node, inTx( db, hasLabels( "Person" ) ) );
     }
     
     @Test
@@ -618,7 +612,7 @@ public class TestApps extends AbstractShellTest
         executeCommand( "set -l ['Person','Thing']" );
         
         // THEN
-        assertEquals( asSet( "Person", "Thing" ), asSet( names( node.getLabels() ) ) );
+        assertThat( node, inTx( db, hasLabels( "Person", "Thing" ) ) );
     }
     
     @Test
@@ -629,6 +623,7 @@ public class TestApps extends AbstractShellTest
         Relationship[] chain = createRelationshipChain( 1 );
         Node node = chain[0].getEndNode();
         node.addLabel( label( "Person" ) );
+        node.addLabel( label( "Pilot" ) );
         finishTx();
         executeCommand( "cd -a " + node.getId() );
 
@@ -636,7 +631,8 @@ public class TestApps extends AbstractShellTest
         executeCommand( "rm -l Person" );
 
         // THEN
-        assertEquals( emptySetOf( String.class ), asSet( names( node.getLabels() ) ) );
+        assertThat( node, inTx( db, hasLabels( "Pilot" ) ) );
+        assertThat( node, inTx( db, not( hasLabels( "Person" ) ) ) );
     }
     
     @Test
@@ -656,7 +652,8 @@ public class TestApps extends AbstractShellTest
         executeCommand( "rm -l ['Person','Object']" );
 
         // THEN
-        assertEquals( asSet( "Thing" ), asSet( names( node.getLabels() ) ) );
+        assertThat( node, inTx( db, hasLabels( "Thing" ) ) );
+        assertThat( node, inTx( db, not( hasLabels( "Person", "Object" ) ) ) );
     }
     
     @Test
@@ -699,7 +696,7 @@ public class TestApps extends AbstractShellTest
         beginTx();
         IndexDefinition index = db.schema().indexFor( label ).on( "name" ).create();
         finishTx();
-        db.schema().awaitIndexOnline( index, 10, SECONDS );
+        waitForIndex( db, index );
 
         // WHEN / THEN
         executeCommand( "schema ls", ":Person", IndexState.ONLINE.name() );
@@ -715,8 +712,8 @@ public class TestApps extends AbstractShellTest
         IndexDefinition index1 = db.schema().indexFor( label1 ).on( "name" ).create();
         IndexDefinition index2 = db.schema().indexFor( label2 ).on( "name" ).create();
         finishTx();
-        db.schema().awaitIndexOnline( index1, 10, SECONDS );
-        db.schema().awaitIndexOnline( index2, 10, SECONDS );
+        waitForIndex( db, index1 );
+        waitForIndex( db, index2 );
 
         // WHEN / THEN
         executeCommand( "schema ls -l " + label2.name(), ":" + label2.name(),
@@ -737,19 +734,19 @@ public class TestApps extends AbstractShellTest
         IndexDefinition index3 = db.schema().indexFor( label2 ).on( property1 ).create();
         IndexDefinition index4 = db.schema().indexFor( label2 ).on( property2 ).create();
         finishTx();
-        db.schema().awaitIndexOnline( index1, 10, SECONDS );
-        db.schema().awaitIndexOnline( index2, 10, SECONDS );
-        db.schema().awaitIndexOnline( index3, 10, SECONDS );
-        db.schema().awaitIndexOnline( index4, 10, SECONDS );
+        waitForIndex( db, index1 );
+        waitForIndex( db, index2 );
+        waitForIndex( db, index3 );
+        waitForIndex( db, index4 );
 
         // WHEN / THEN
         executeCommand( "schema ls" +
                 " -l :" + label2.name() +
                 " -p " + property1,
-                
+
                 label2.name(), property1, "!" + label1.name(), "!" + property2 );
     }
-    
+
     @Test
     public void canAwaitIndexesToComeOnline() throws Exception
     {
@@ -761,9 +758,11 @@ public class TestApps extends AbstractShellTest
 
         // WHEN / THEN
         executeCommand( "schema await -l " + label.name() );
+        beginTx();
         assertEquals( IndexState.ONLINE, db.schema().getIndexState( index ) );
+        finishTx();
     }
-    
+
     @Test
     public void canListIndexesWhenNoOptionGiven() throws Exception
     {
@@ -773,7 +772,7 @@ public class TestApps extends AbstractShellTest
         beginTx();
         IndexDefinition index = db.schema().indexFor( label ).on( property ).create();
         finishTx();
-        db.schema().awaitIndexOnline( index, 10, SECONDS );
+        waitForIndex( db, index );
 
         // WHEN / THEN
         executeCommand( "schema", label.name(), property );
@@ -802,7 +801,7 @@ public class TestApps extends AbstractShellTest
         finishTx();
 
         // WHEN / THEN
-        executeCommand( "schema ls -l :Person", "ON \\(person:Person\\) ASSERT person.name IS UNIQUE");
+        executeCommand( "schema ls -l :Person", "ON \\(person:Person\\) ASSERT person.name IS UNIQUE" );
     }
 
     @Test
@@ -816,17 +815,5 @@ public class TestApps extends AbstractShellTest
 
         // WHEN / THEN
         executeCommand( "schema ls -l :Person -p name", "ON \\(person:Person\\) ASSERT person.name IS UNIQUE" );
-    }
-
-    private Iterable<String> names( Iterable<Label> labels )
-    {
-        return Iterables.map( new Function<Label, String>()
-        {
-            @Override
-            public String apply( Label label )
-            {
-                return label.name();
-            }
-        }, labels );
     }
 }

@@ -19,7 +19,9 @@
  */
 package org.neo4j.kernel.impl.core;
 
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 
 import org.neo4j.graphdb.ConstraintViolationException;
 import org.neo4j.graphdb.Direction;
@@ -38,14 +40,16 @@ import org.neo4j.graphdb.Traverser.Order;
 import org.neo4j.helpers.Function;
 import org.neo4j.helpers.ThisShouldNotHappenError;
 import org.neo4j.kernel.ThreadToStatementContextBridge;
-import org.neo4j.kernel.api.StatementContext;
+import org.neo4j.kernel.api.StatementOperationParts;
 import org.neo4j.kernel.api.exceptions.EntityNotFoundException;
 import org.neo4j.kernel.api.exceptions.LabelNotFoundKernelException;
 import org.neo4j.kernel.api.exceptions.PropertyKeyIdNotFoundException;
 import org.neo4j.kernel.api.exceptions.PropertyKeyNotFoundException;
 import org.neo4j.kernel.api.exceptions.PropertyNotFoundException;
 import org.neo4j.kernel.api.exceptions.schema.SchemaKernelException;
+import org.neo4j.kernel.api.operations.StatementState;
 import org.neo4j.kernel.api.properties.Property;
+import org.neo4j.kernel.impl.api.PrimitiveLongIterator;
 import org.neo4j.kernel.impl.cleanup.CleanupService;
 import org.neo4j.kernel.impl.transaction.LockType;
 import org.neo4j.kernel.impl.traversal.OldTraverserWrapper;
@@ -95,14 +99,15 @@ public class NodeProxy implements Node
     @Override
     public void delete()
     {
-        StatementContext context = statementCtxProvider.getCtxForWriting();
+        StatementOperationParts context = statementCtxProvider.getCtxForWriting();
+        StatementState state = statementCtxProvider.statementForWriting();
         try
         {
-            context.nodeDelete( getId() );
+            context.entityWriteOperations().nodeDelete( state, getId() );
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
@@ -177,12 +182,13 @@ public class NodeProxy implements Node
     @Override
     public void setProperty( String key, Object value )
     {
-        StatementContext context = statementCtxProvider.getCtxForWriting();
+        StatementOperationParts context = statementCtxProvider.getCtxForWriting();
+        StatementState state = statementCtxProvider.statementForWriting();
         boolean success = false;
         try
         {
-            long propertyKeyId = context.propertyKeyGetOrCreateForName( key );
-            context.nodeSetProperty( nodeId, Property.property( propertyKeyId, value ) );
+            long propertyKeyId = context.keyWriteOperations().propertyKeyGetOrCreateForName( state, key );
+            context.entityWriteOperations().nodeSetProperty( state, nodeId, Property.property( propertyKeyId, value ) );
             success = true;
         }
         catch ( PropertyKeyIdNotFoundException e )
@@ -200,7 +206,7 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
             if ( !success )
             {
                 nodeLookup.getNodeManager().setRollbackOnly();
@@ -211,11 +217,12 @@ public class NodeProxy implements Node
     @Override
     public Object removeProperty( String key ) throws NotFoundException
     {
-        StatementContext context = statementCtxProvider.getCtxForWriting();
+        StatementOperationParts context = statementCtxProvider.getCtxForWriting();
+        StatementState state = statementCtxProvider.statementForWriting();
         try
         {
-            long propertyId = context.propertyKeyGetOrCreateForName( key );
-            return context.nodeRemoveProperty( nodeId, propertyId ).value( null );
+            long propertyKeyId = context.keyWriteOperations().propertyKeyGetOrCreateForName( state, key );
+            return context.entityWriteOperations().nodeRemoveProperty( state, nodeId, propertyKeyId ).value( null );
         }
         catch ( PropertyKeyIdNotFoundException e )
         {
@@ -232,7 +239,7 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
@@ -244,11 +251,12 @@ public class NodeProxy implements Node
         if ( null == key )
             throw new IllegalArgumentException( "(null) property key is not allowed" );
 
-        StatementContext context = statementCtxProvider.getCtxForReading();
+        StatementOperationParts context = statementCtxProvider.getCtxForReading();
+        StatementState state = statementCtxProvider.statementForReading();
         try
         {
-            long propertyId = context.propertyKeyGetForName( key );
-            return context.nodeGetProperty( nodeId, propertyId ).value(defaultValue);
+            long propertyKeyId = context.keyReadOperations().propertyKeyGetForName( state, key );
+            return context.entityReadOperations().nodeGetProperty( state, nodeId, propertyKeyId ).value(defaultValue);
         }
         catch ( EntityNotFoundException e )
         {
@@ -264,14 +272,15 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
     @Override
     public Iterable<Object> getPropertyValues()
     {
-        final StatementContext context = statementCtxProvider.getCtxForReading();
+        final StatementOperationParts context = statementCtxProvider.getCtxForReading();
+        StatementState state = statementCtxProvider.statementForReading();
         try
         {
             return asSet( map( new Function<Property,Object>() {
@@ -288,7 +297,7 @@ public class NodeProxy implements Node
                                 "Property key retrieved through kernel API should exist." );
                     }
                 }
-            }, context.nodeGetAllProperties( getId() )));
+            }, context.entityReadOperations().nodeGetAllProperties( state, getId() )));
         }
         catch ( EntityNotFoundException e )
         {
@@ -296,39 +305,37 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
     @Override
     public Iterable<String> getPropertyKeys()
     {
-        final StatementContext context = statementCtxProvider.getCtxForReading();
+        final StatementOperationParts context = statementCtxProvider.getCtxForReading();
+        final StatementState state = statementCtxProvider.statementForReading();
         try
         {
-            return asSet( map( new Function<Long, String>() {
-                @Override
-                public String apply( Long propertyKeyId )
-                {
-                    try
-                    {
-                        return context.propertyKeyGetName( propertyKeyId );
-                    }
-                    catch ( PropertyKeyIdNotFoundException e )
-                    {
-                        throw new ThisShouldNotHappenError( "Jake",
-                                "Property key retrieved through kernel API should exist." );
-                    }
-                }
-            }, context.nodeGetPropertyKeys( getId() )));
+            List<String> keys = new ArrayList<>();
+            PrimitiveLongIterator keyIds = context.entityReadOperations().nodeGetPropertyKeys( state, getId() );
+            while ( keyIds.hasNext() )
+            {
+                keys.add( context.keyReadOperations().propertyKeyGetName( state, keyIds.next() ) );
+            }
+            return keys;
         }
         catch ( EntityNotFoundException e )
         {
             throw new NotFoundException( "Node not found", e );
         }
+        catch ( PropertyKeyIdNotFoundException e )
+        {
+            throw new ThisShouldNotHappenError( "Jake",
+                    "Property key retrieved through kernel API should exist." );
+        }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
@@ -340,11 +347,12 @@ public class NodeProxy implements Node
         if ( null == key )
             throw new IllegalArgumentException( "(null) property key is not allowed" );
 
-        StatementContext context = statementCtxProvider.getCtxForReading();
+        StatementOperationParts context = statementCtxProvider.getCtxForReading();
+        StatementState state = statementCtxProvider.statementForReading();
         try
         {
-            long propertyId = context.propertyKeyGetForName( key );
-            return context.nodeGetProperty( nodeId, propertyId ).value();
+            long propertyKeyId = context.keyReadOperations().propertyKeyGetForName( state, key );
+            return context.entityReadOperations().nodeGetProperty( state, nodeId, propertyKeyId ).value();
         }
         catch ( EntityNotFoundException e )
         {
@@ -364,7 +372,7 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
@@ -374,11 +382,12 @@ public class NodeProxy implements Node
         if ( null == key )
             return false;
 
-        StatementContext context = statementCtxProvider.getCtxForReading();
+        StatementOperationParts context = statementCtxProvider.getCtxForReading();
+        StatementState state = statementCtxProvider.statementForReading();
         try
         {
-            long propertyId = context.propertyKeyGetForName( key );
-            return context.nodeHasProperty( nodeId, propertyId );
+            long propertyKeyId = context.keyReadOperations().propertyKeyGetForName( state, key );
+            return context.entityReadOperations().nodeHasProperty( state, nodeId, propertyKeyId );
         }
         catch ( EntityNotFoundException e )
         {
@@ -394,7 +403,7 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
@@ -478,10 +487,12 @@ public class NodeProxy implements Node
     @Override
     public void addLabel( Label label )
     {
-        StatementContext context = statementCtxProvider.getCtxForWriting();
+        StatementOperationParts context = statementCtxProvider.getCtxForWriting();
+        StatementState state = statementCtxProvider.statementForWriting();
         try
         {
-            context.nodeAddLabel( getId(), context.labelGetOrCreateForName( label.name() ) );
+            context.entityWriteOperations().nodeAddLabel( state, getId(),
+                    context.keyWriteOperations().labelGetOrCreateForName( state, label.name() ) );
         }
         catch ( SchemaKernelException e )
         {
@@ -493,46 +504,42 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
     @Override
     public void removeLabel( Label label )
     {
-        StatementContext context = statementCtxProvider.getCtxForWriting();
-        try {
-            long labelId;
-            try
-            {
-                labelId = context.labelGetForName( label.name() );
-            }
-            catch ( LabelNotFoundKernelException e )
-            {
-                return;
-            }
-            try
-            {
-                context.nodeRemoveLabel( getId(), labelId );
-            }
-            catch ( EntityNotFoundException e )
-            {
-                throw new NotFoundException( "No node with id " + getId() + " found.", e );
-            }
+        StatementOperationParts context = statementCtxProvider.getCtxForWriting();
+        StatementState state = statementCtxProvider.statementForWriting();
+        try
+        {
+            long labelId = context.keyReadOperations().labelGetForName( state, label.name() );
+            context.entityWriteOperations().nodeRemoveLabel( state, getId(), labelId );
+        }
+        catch ( LabelNotFoundKernelException e )
+        {
+            return;
+        }
+        catch ( EntityNotFoundException e )
+        {
+            throw new NotFoundException( "No node with id " + getId() + " found.", e );
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
     }
 
     @Override
     public boolean hasLabel( Label label )
     {
-        StatementContext context = statementCtxProvider.getCtxForReading();
+        StatementOperationParts context = statementCtxProvider.getCtxForReading();
+        StatementState state = statementCtxProvider.statementForReading();
         try
         {
-            return context.nodeHasLabel( getId(), context.labelGetForName( label.name() ) );
+            return context.entityReadOperations().nodeHasLabel( state, getId(), context.keyReadOperations().labelGetForName( state, label.name() ) );
         }
         catch ( LabelNotFoundKernelException e )
         {
@@ -544,9 +551,8 @@ public class NodeProxy implements Node
         }
         finally
         {
-            context.close();
+            context.close( state );
         }
-
     }
 
     @Override
@@ -557,16 +563,17 @@ public class NodeProxy implements Node
             @Override
             public ResourceIterator<Label> iterator()
             {
-                final StatementContext context = statementCtxProvider.getCtxForReading();
+                final StatementOperationParts context = statementCtxProvider.getCtxForReading();
                 Iterator<Long> labels;
 
+                final StatementState state = statementCtxProvider.statementForReading();
                 try
                 {
-                    labels = context.nodeGetLabels( getId() );
+                    labels = context.entityReadOperations().nodeGetLabels( state, getId() );
                 }
                 catch ( EntityNotFoundException e )
                 {
-                    context.close();
+                    context.close( state );
                     throw new NotFoundException( "No node with id " + getId() + " found.", e );
                 }
 
@@ -577,7 +584,7 @@ public class NodeProxy implements Node
                     {
                         try
                         {
-                            return label( context.labelGetName( labelId ) );
+                            return label( context.keyReadOperations().labelGetName( state, labelId ) );
                         }
                         catch ( LabelNotFoundKernelException e )
                         {
@@ -585,7 +592,7 @@ public class NodeProxy implements Node
                                     ", but the returned label " + labelId + " doesn't exist anymore" );
                         }
                     }
-                }, labels ), context );
+                }, labels ), state.closeable( context.lifecycleOperations() ) );
             }
         };
     }

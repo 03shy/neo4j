@@ -53,6 +53,7 @@ import org.neo4j.kernel.IndexDefinitionImpl;
 import org.neo4j.kernel.InternalAbstractGraphDatabase;
 import org.neo4j.kernel.InternalSchemaActions;
 import org.neo4j.kernel.PropertyUniqueConstraintDefinition;
+import org.neo4j.kernel.StoreLocker;
 import org.neo4j.kernel.api.constraints.UniquenessConstraint;
 import org.neo4j.kernel.api.exceptions.KernelException;
 import org.neo4j.kernel.api.index.IndexConfiguration;
@@ -100,20 +101,22 @@ import org.neo4j.kernel.impl.nioneo.store.SchemaStore;
 import org.neo4j.kernel.impl.nioneo.store.StoreFactory;
 import org.neo4j.kernel.impl.nioneo.store.UnderlyingStorageException;
 import org.neo4j.kernel.impl.nioneo.store.UniquenessConstraintRule;
+import org.neo4j.kernel.impl.nioneo.store.labels.NodeLabels;
 import org.neo4j.kernel.impl.nioneo.xa.DefaultSchemaIndexProviderMap;
 import org.neo4j.kernel.impl.nioneo.xa.NeoStoreIndexStoreView;
-import org.neo4j.kernel.impl.nioneo.xa.NodeLabelRecordLogic;
 import org.neo4j.kernel.impl.util.FileUtils;
 import org.neo4j.kernel.impl.util.StringLogger;
 import org.neo4j.kernel.lifecycle.LifeSupport;
 
 import static java.lang.Boolean.parseBoolean;
+
 import static org.neo4j.graphdb.DynamicLabel.label;
 import static org.neo4j.helpers.collection.Iterables.map;
 import static org.neo4j.helpers.collection.IteratorUtil.asIterable;
 import static org.neo4j.helpers.collection.IteratorUtil.first;
 import static org.neo4j.kernel.api.index.SchemaIndexProvider.HIGHEST_PRIORITIZED_OR_NONE;
 import static org.neo4j.kernel.impl.nioneo.store.PropertyStore.encodeString;
+import static org.neo4j.kernel.impl.nioneo.store.labels.NodeLabelsField.parseLabelsField;
 
 public class BatchInserterImpl implements BatchInserter
 {
@@ -145,6 +148,7 @@ public class BatchInserterImpl implements BatchInserter
     };
 
     private final BatchInserterImpl.BatchSchemaActions actions;
+    private final StoreLocker storeLocker;
 
     BatchInserterImpl( String storeDir, FileSystemAbstraction fileSystem,
                        Map<String, String> stringParams, Iterable<KernelExtensionFactory<?>> kernelExtensions )
@@ -159,6 +163,9 @@ public class BatchInserterImpl implements BatchInserter
         params.put( GraphDatabaseSettings.use_memory_mapped_buffers.name(), Settings.FALSE );
         params.put( InternalAbstractGraphDatabase.Configuration.store_dir.name(), storeDir );
         params.putAll( stringParams );
+
+        storeLocker = new StoreLocker( fileSystem );
+        storeLocker.checkLock( this.storeDir );
 
         config = new Config( params, GraphDatabaseSettings.class );
         boolean dump = config.get( GraphDatabaseSettings.dump_configuration );
@@ -664,9 +671,8 @@ public class BatchInserterImpl implements BatchInserter
 
     private void setNodeLabels( NodeRecord nodeRecord, Label... labels )
     {
-        NodeLabelRecordLogic manipulator = new NodeLabelRecordLogic( nodeRecord, getNodeStore() );
-        Iterable<DynamicRecord> changedDynamicLabelRecords = manipulator.set( getOrCreateLabelIds( labels ) );
-        getNodeStore().updateDynamicLabelRecords( changedDynamicLabelRecords );
+        NodeLabels nodeLabels = parseLabelsField( nodeRecord );
+        getNodeStore().updateDynamicLabelRecords( nodeLabels.put( getOrCreateLabelIds( labels ), getNodeStore() ) );
     }
 
     private long[] getOrCreateLabelIds( Label[] labels )
@@ -716,7 +722,7 @@ public class BatchInserterImpl implements BatchInserter
     {
         NodeStore nodeStore = neoStore.getNodeStore();
         return map( labelIdToLabelFunction,
-                    asIterable( getNodeStore().getLabelsForNode( nodeStore.getRecord( node ) ) ) );
+                    asIterable( parseLabelsField( nodeStore.getRecord( node ) ).get( getNodeStore() ) ) );
     }
 
     @Override
@@ -729,7 +735,7 @@ public class BatchInserterImpl implements BatchInserter
     private boolean nodeHasLabel( long node, long labelId )
     {
         NodeStore nodeStore = neoStore.getNodeStore();
-        long[] labels = getNodeStore().getLabelsForNode( nodeStore.getRecord( node ) );
+        long[] labels = parseLabelsField( nodeStore.getRecord( node ) ).get( getNodeStore() );
         for ( long label : labels )
         {
             if ( label == labelId )
@@ -961,6 +967,16 @@ public class BatchInserterImpl implements BatchInserter
             throw new RuntimeException( e );
         }
         neoStore.close();
+
+        try
+        {
+            storeLocker.release();
+        }
+        catch ( IOException e )
+        {
+            throw new UnderlyingStorageException( "Could not release store lock", e );
+        }
+
         msgLog.logMessage( Thread.currentThread() + " Clean shutdown on BatchInserter(" + this + ")", true );
         msgLog.close();
         life.shutdown();

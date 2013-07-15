@@ -42,10 +42,12 @@ import static org.neo4j.helpers.Settings.osIsWindows;
 public class StoreAccess
 {
     // Top level stores
+    private final RecordStore<DynamicRecord> schemaStore;
     private final RecordStore<NodeRecord> nodeStore;
     private final RecordStore<RelationshipRecord> relStore;
     private final RecordStore<RelationshipTypeTokenRecord> relationshipTypeTokenStore;
     private final RecordStore<LabelTokenRecord> labelTokenStore;
+    private final RecordStore<DynamicRecord> nodeDynamicLabelStore;
     private final RecordStore<PropertyRecord> propStore;
     // Transitive stores
     private final RecordStore<DynamicRecord> stringStore, arrayStore;
@@ -70,14 +72,15 @@ public class StoreAccess
 
     public StoreAccess( NeoStore store )
     {
-        this( store.getNodeStore(), store.getRelationshipStore(), store.getPropertyStore(),
+        this( store.getSchemaStore(), store.getNodeStore(), store.getRelationshipStore(), store.getPropertyStore(),
                 store.getRelationshipTypeStore(), store.getLabelTokenStore() );
         this.neoStore = store;
     }
 
-    public StoreAccess( NodeStore nodeStore, RelationshipStore relStore, PropertyStore propStore,
+    public StoreAccess( SchemaStore schemaStore, NodeStore nodeStore, RelationshipStore relStore, PropertyStore propStore,
                         RelationshipTypeTokenStore typeStore, LabelTokenStore labelTokenStore )
     {
+        this.schemaStore = wrapStore( schemaStore );
         this.nodeStore = wrapStore( nodeStore );
         this.relStore = wrapStore( relStore );
         this.propStore = wrapStore( propStore );
@@ -85,6 +88,7 @@ public class StoreAccess
         this.arrayStore = wrapStore( propStore.getArrayStore() );
         this.relationshipTypeTokenStore = wrapStore( typeStore );
         this.labelTokenStore = wrapStore( labelTokenStore );
+        this.nodeDynamicLabelStore = wrapStore( nodeStore.getDynamicLabelStore() );
         this.propertyKeyTokenStore = wrapStore( propStore.getPropertyKeyTokenStore() );
         this.relationshipTypeNameStore = wrapStore( typeStore.getNameStore() );
         this.labelNameStore = wrapStore( labelTokenStore.getNameStore() );
@@ -128,6 +132,11 @@ public class StoreAccess
         return neoStore;
     }
 
+    public RecordStore<DynamicRecord> getSchemaStore()
+    {
+        return schemaStore;
+    }
+
     public RecordStore<NodeRecord> getNodeStore()
     {
         return nodeStore;
@@ -161,6 +170,11 @@ public class StoreAccess
     public RecordStore<LabelTokenRecord> getLabelTokenStore()
     {
         return labelTokenStore;
+    }
+
+    public RecordStore<DynamicRecord> getNodeDynamicLabelStore()
+    {
+        return nodeDynamicLabelStore;
     }
 
     public RecordStore<PropertyKeyTokenRecord> getPropertyKeyTokenStore()
@@ -201,8 +215,8 @@ public class StoreAccess
             };
         }
         return new RecordStore<?>[]{
-                nodeStore, relStore, propStore, stringStore, arrayStore, // basic
-                relationshipTypeTokenStore, propertyKeyTokenStore, relationshipTypeNameStore, propertyKeyNameStore, // internal
+                schemaStore, nodeStore, relStore, propStore, stringStore, arrayStore,
+                relationshipTypeTokenStore, propertyKeyTokenStore, relationshipTypeNameStore, propertyKeyNameStore,
         };
     }
 

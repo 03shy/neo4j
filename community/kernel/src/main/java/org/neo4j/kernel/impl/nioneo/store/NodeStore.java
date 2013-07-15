@@ -30,13 +30,14 @@ import org.neo4j.kernel.IdGeneratorFactory;
 import org.neo4j.kernel.IdType;
 import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.impl.nioneo.store.windowpool.WindowPoolFactory;
-import org.neo4j.kernel.impl.nioneo.xa.NodeLabelRecordLogic;
 import org.neo4j.kernel.impl.util.StringLogger;
+
+import static org.neo4j.kernel.impl.nioneo.store.labels.NodeLabelsField.parseLabelsField;
 
 /**
  * Implementation of the node store.
  */
-public class NodeStore extends AbstractStore implements Store, RecordStore<NodeRecord>
+public class NodeStore extends AbstractRecordStore<NodeRecord> implements Store
 {
     public static abstract class Configuration
         extends AbstractStore.Configuration
@@ -85,13 +86,7 @@ public class NodeStore extends AbstractStore implements Store, RecordStore<NodeR
     
     public void ensureHeavy( NodeRecord node )
     {
-        long labels = node.getLabelField();
-        byte header = NodeLabelRecordLogic.getHeader( labels );
-        if ( NodeLabelRecordLogic.highHeaderBitSet( header ) )
-        {
-            long firstDynamicRecord = NodeLabelRecordLogic.parseLabelsBody( labels );
-            ensureHeavy( node, firstDynamicRecord );
-        }
+        parseLabelsField( node ).ensureHeavy( this );
     }
     
     public void ensureHeavy( NodeRecord node, long firstDynamicLabelRecord )
@@ -300,7 +295,7 @@ public class NodeStore extends AbstractStore implements Store, RecordStore<NodeR
     @Override
     public List<WindowPoolStats> getAllWindowPoolStats()
     {
-        List<WindowPoolStats> list = new ArrayList<WindowPoolStats>();
+        List<WindowPoolStats> list = new ArrayList<>();
         list.add( getWindowPoolStats() );
         return list;
     }
@@ -332,7 +327,7 @@ public class NodeStore extends AbstractStore implements Store, RecordStore<NodeR
 
     public long[] getDynamicLabelsArray( Iterable<DynamicRecord> records )
     {
-        return (long[]) dynamicLabelStore.getRightArray( dynamicLabelStore.readFullByteArray(
+        return (long[]) DynamicArrayStore.getRightArray( dynamicLabelStore.readFullByteArray(
                 records, PropertyType.ARRAY ) );
     }
     
@@ -341,21 +336,7 @@ public class NodeStore extends AbstractStore implements Store, RecordStore<NodeR
         for ( DynamicRecord record : dynamicLabelRecords )
             dynamicLabelStore.updateRecord( record );
     }
-    
-    public long[] getLabelsForNode( NodeRecord node )
-    {
-        long labels = node.getLabelField();
-        byte header = NodeLabelRecordLogic.getHeader( labels );
-        if ( !NodeLabelRecordLogic.highHeaderBitSet( header ) )
-            return NodeLabelRecordLogic.parseInlined( labels, header );
-        else
-        {
-            long firstDynamicRecord = NodeLabelRecordLogic.parseLabelsBody( labels );
-            ensureHeavy( node, firstDynamicRecord );
-            return getDynamicLabelsArray( node.getDynamicLabelRecords() );
-        }
-    }
-    
+
     @Override
     protected void setRecovered()
     {
