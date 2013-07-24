@@ -71,6 +71,7 @@ public class TestBasicHaOperations
         HighlyAvailableGraphDatabase slave1 = cluster.getAnySlave();
         HighlyAvailableGraphDatabase slave2 = cluster.getAnySlave( slave1 );
 
+        // When
         long start = System.nanoTime();
         cluster.shutdown( master );
         logger.getLogger().warn( "Shut down master" );
@@ -80,6 +81,7 @@ public class TestBasicHaOperations
 
         logger.getLogger().warn( "Failover took:"+(end-start)/1000000+"ms" );
 
+        // Then
         boolean slave1Master = slave1.isMaster();
         boolean slave2Master = slave2.isMaster();
 
@@ -126,10 +128,17 @@ public class TestBasicHaOperations
         }
 
         HighlyAvailableGraphDatabase master = cluster.getMaster();
-
-        String value = master.getNodeById( nodeId ).getProperty( "Hello" ).toString();
-        logger.getLogger().info( "Hello=" + value );
-        assertEquals( "World", value );
+        Transaction transaction = master.beginTx();
+        try
+        {
+            String value = master.getNodeById( nodeId ).getProperty( "Hello" ).toString();
+            logger.getLogger().info( "Hello=" + value );
+            assertEquals( "World", value );
+        }
+        finally
+        {
+            transaction.finish();
+        }
     }
 
     @Test
@@ -166,16 +175,31 @@ public class TestBasicHaOperations
 
         // No need to wait, the push factor is 2
         HighlyAvailableGraphDatabase slave1 = cluster.getAnySlave();
-
-        String value = slave1.getNodeById( nodeId ).getProperty( "Hello" ).toString();
-        logger.getLogger().info( "Hello=" + value );
-        assertEquals( "World", value );
+        Transaction transaction = slave1.beginTx();
+        String value;
+        try
+        {
+            value = slave1.getNodeById( nodeId ).getProperty( "Hello" ).toString();
+            logger.getLogger().info( "Hello=" + value );
+            assertEquals( "World", value );
+        }
+        finally
+        {
+            transaction.finish();
+        }
 
 
         HighlyAvailableGraphDatabase slave2 = cluster.getAnySlave(slave1);
-
-        value = slave2.getNodeById( nodeId ).getProperty( "Hello" ).toString();
-        logger.getLogger().info( "Hello=" + value );
-        assertEquals( "World", value );
+        transaction = slave2.beginTx();
+        try
+        {
+            value = slave2.getNodeById( nodeId ).getProperty( "Hello" ).toString();
+            logger.getLogger().info( "Hello=" + value );
+            assertEquals( "World", value );
+        }
+        finally
+        {
+            transaction.finish();
+        }
     }
 }

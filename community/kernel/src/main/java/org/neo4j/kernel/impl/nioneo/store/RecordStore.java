@@ -111,12 +111,19 @@ public interface RecordStore<R extends AbstractBaseRecord>
             processDynamic( store, array );
         }
 
+        public void processLabelArrayWithOwner( RecordStore<DynamicRecord> store, DynamicRecord labelArray )
+                throws FAILURE
+        {
+            processDynamic( store, labelArray );
+        }
+
         protected void processDynamic( RecordStore<DynamicRecord> store, DynamicRecord record ) throws FAILURE
         {
             processRecord( DynamicRecord.class, store, record );
         }
 
-        public void processRelationshipType( RecordStore<RelationshipTypeTokenRecord> store, RelationshipTypeTokenRecord record ) throws FAILURE
+        public void processRelationshipTypeToken( RecordStore<RelationshipTypeTokenRecord> store,
+                                                  RelationshipTypeTokenRecord record ) throws FAILURE
         {
             processRecord( RelationshipTypeTokenRecord.class, store, record );
         }
@@ -126,9 +133,9 @@ public interface RecordStore<R extends AbstractBaseRecord>
             processRecord( PropertyKeyTokenRecord.class, store, record );
         }
 
-        public void processLabelName( RecordStore<LabelTokenRecord> store, LabelTokenRecord record ) throws FAILURE
+        public void processLabelToken( RecordStore<LabelTokenRecord> store, LabelTokenRecord record ) throws FAILURE
         {
-            processRecord( LabelTokenRecord.class, store, record );
+            processRecord(LabelTokenRecord.class, store, record);
         }
 
         @SuppressWarnings("UnusedParameters")
@@ -219,5 +226,6 @@ public interface RecordStore<R extends AbstractBaseRecord>
             }
             progressListener.done();
         }
+
     }
 }

@@ -19,22 +19,25 @@
  */
 package org.neo4j.kernel.impl.api;
 
-import java.util.Collections;
-
 import org.mockito.Matchers;
+
+import org.neo4j.helpers.collection.IteratorUtil;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
+
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.api.StatementOperationParts;
 import org.neo4j.kernel.api.exceptions.index.IndexNotFoundKernelException;
 import org.neo4j.kernel.api.index.IndexReader;
 import org.neo4j.kernel.api.operations.EntityReadOperations;
 import org.neo4j.kernel.api.operations.EntityWriteOperations;
-import org.neo4j.kernel.api.operations.LifecycleOperations;
-import org.neo4j.kernel.api.operations.StatementState;
 import org.neo4j.kernel.api.operations.KeyReadOperations;
 import org.neo4j.kernel.api.operations.KeyWriteOperations;
+import org.neo4j.kernel.api.operations.LifecycleOperations;
 import org.neo4j.kernel.api.operations.SchemaReadOperations;
 import org.neo4j.kernel.api.operations.SchemaStateOperations;
 import org.neo4j.kernel.api.operations.SchemaWriteOperations;
+import org.neo4j.kernel.api.operations.StatementState;
 import org.neo4j.kernel.impl.api.state.TxState;
 
 import static org.mockito.Matchers.anyLong;
@@ -69,7 +72,7 @@ public abstract class StatementOperationsTestHelper
         return mockedState( mock( TxState.class ) );
     }
     
-    public static StatementState mockedState( TxState txState )
+    public static StatementState mockedState( final TxState txState )
     {
         StatementState state = mock( StatementState.class );
         LockHolder lockHolder = mock( LockHolder.class );
@@ -77,7 +80,7 @@ public abstract class StatementOperationsTestHelper
         try
         {
             IndexReader indexReader = mock( IndexReader.class );
-            when( indexReader.lookup( Matchers.any() ) ).thenReturn( Collections.<Long>emptyList().iterator() );
+            when( indexReader.lookup( Matchers.any() ) ).thenReturn( IteratorUtil.emptyPrimitiveLongIterator() );
             when( indexReaderFactory.newReader( anyLong() ) ).thenReturn( indexReader );
         }
         catch ( IndexNotFoundKernelException e )
@@ -85,6 +88,14 @@ public abstract class StatementOperationsTestHelper
             throw new Error( e );
         }
         when( state.txState() ).thenReturn( txState );
+        when( state.hasTxState() ).thenReturn( true );
+        when( state.hasTxStateWithChanges() ).thenAnswer( new Answer<Boolean>() {
+            @Override
+            public Boolean answer( InvocationOnMock invocation ) throws Throwable
+            {
+                return txState.hasChanges();
+            }
+        } );
         when( state.locks() ).thenReturn( lockHolder );
         when( state.indexReaderFactory() ).thenReturn( indexReaderFactory );
         return state;

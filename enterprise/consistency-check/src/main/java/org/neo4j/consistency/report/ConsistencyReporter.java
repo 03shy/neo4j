@@ -42,7 +42,9 @@ import org.neo4j.kernel.impl.nioneo.store.RelationshipRecord;
 import org.neo4j.kernel.impl.nioneo.store.RelationshipTypeTokenRecord;
 
 import static java.lang.reflect.Proxy.getInvocationHandler;
+import static java.util.Arrays.asList;
 
+import static org.neo4j.consistency.report.ConsistencyReport.DynamicLabelConsistencyReport;
 import static org.neo4j.helpers.Exceptions.launderedException;
 import static org.neo4j.helpers.Exceptions.withCause;
 
@@ -81,6 +83,8 @@ public class ConsistencyReporter implements ConsistencyReport.Reporter
             ProxyFactory.create( ConsistencyReport.PropertyKeyTokenConsistencyReport.class );
     private static final ProxyFactory<ConsistencyReport.DynamicConsistencyReport> DYNAMIC_REPORT =
             ProxyFactory.create( ConsistencyReport.DynamicConsistencyReport.class );
+    private static final ProxyFactory<ConsistencyReport.DynamicLabelConsistencyReport> DYNAMIC_LABEL_REPORT =
+            ProxyFactory.create( ConsistencyReport.DynamicLabelConsistencyReport.class );
 
     private final DiffRecordAccess records;
     private final InconsistencyReport report;
@@ -407,7 +411,7 @@ public class ConsistencyReporter implements ConsistencyReport.Reporter
                                          RecordCheck<RelationshipTypeTokenRecord,
                                                  ConsistencyReport.RelationshipTypeConsistencyReport> checker )
     {
-        dispatch( RecordType.RELATIONSHIP_LABEL, RELATIONSHIP_TYPE_REPORT, relationshipTypeTokenRecord, checker );
+        dispatch( RecordType.RELATIONSHIP_TYPE, RELATIONSHIP_TYPE_REPORT, relationshipTypeTokenRecord, checker );
     }
 
     @Override
@@ -415,20 +419,20 @@ public class ConsistencyReporter implements ConsistencyReport.Reporter
                                                RecordCheck<RelationshipTypeTokenRecord,
                                                        ConsistencyReport.RelationshipTypeConsistencyReport> checker )
     {
-        dispatchChange( RecordType.RELATIONSHIP_LABEL, RELATIONSHIP_TYPE_REPORT, oldType, newType, checker );
+        dispatchChange( RecordType.RELATIONSHIP_TYPE, RELATIONSHIP_TYPE_REPORT, oldType, newType, checker );
     }
 
     @Override
     public void forLabelName( LabelTokenRecord label, RecordCheck<LabelTokenRecord, ConsistencyReport.LabelTokenConsistencyReport> checker )
     {
-        dispatch( RecordType.LABEL_KEY, LABEL_KEY_REPORT, label, checker );
+        dispatch( RecordType.LABEL, LABEL_KEY_REPORT, label, checker );
     }
 
     @Override
     public void forLabelNameChange( LabelTokenRecord oldLabel, LabelTokenRecord newLabel, RecordCheck<LabelTokenRecord,
             ConsistencyReport.LabelTokenConsistencyReport> checker )
     {
-        dispatchChange( RecordType.LABEL_KEY, LABEL_KEY_REPORT, oldLabel, newLabel, checker );
+        dispatchChange( RecordType.LABEL, LABEL_KEY_REPORT, oldLabel, newLabel, checker );
     }
 
     @Override
@@ -459,6 +463,20 @@ public class ConsistencyReporter implements ConsistencyReport.Reporter
         dispatchChange( type, DYNAMIC_REPORT, oldRecord, newRecord, checker );
     }
 
+    @Override
+    public void forDynamicLabelBlock( RecordType type, DynamicRecord record,
+                                      RecordCheck<DynamicRecord, DynamicLabelConsistencyReport> checker )
+    {
+        dispatch( type, DYNAMIC_LABEL_REPORT, record, checker );
+    }
+
+    @Override
+    public void forDynamicLabelBlockChange( RecordType type, DynamicRecord oldRecord, DynamicRecord newRecord,
+                                            RecordCheck<DynamicRecord, DynamicLabelConsistencyReport> checker )
+    {
+        dispatchChange( type, DYNAMIC_LABEL_REPORT, oldRecord, newRecord, checker );
+    }
+
     private static class ProxyFactory<T>
     {
         private Constructor<? extends T> constructor;
@@ -476,6 +494,12 @@ public class ConsistencyReporter implements ConsistencyReport.Reporter
             {
                 throw withCause( new LinkageError( "Cannot access Proxy constructor for " + type.getName() ), e );
             }
+        }
+
+        @Override
+        public String toString()
+        {
+            return getClass().getSimpleName() + asList( constructor.getDeclaringClass().getInterfaces() );
         }
 
         public T create( InvocationHandler handler )
@@ -496,7 +520,7 @@ public class ConsistencyReporter implements ConsistencyReport.Reporter
 
         public static <T> ProxyFactory<T> create( Class<T> type )
         {
-            return new ProxyFactory<T>( type );
+            return new ProxyFactory<>( type );
         }
     }
 }

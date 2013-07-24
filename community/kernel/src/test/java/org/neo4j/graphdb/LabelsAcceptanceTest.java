@@ -20,6 +20,7 @@
 package org.neo4j.graphdb;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -419,7 +420,7 @@ public class LabelsAcceptanceTest
     {
         // GIVEN
         GraphDatabaseService db = dbRule.getGraphDatabaseService();
-        final Label label = DynamicLabel.label("A");
+        final Label label = DynamicLabel.label( "A" );
         {
             final Transaction tx = db.beginTx();
             final Node node = db.createNode();
@@ -442,7 +443,70 @@ public class LabelsAcceptanceTest
         }
 
         // THEN
+        Transaction transaction = db.beginTx();
         assertEquals( 0, count( GlobalGraphOperations.at( db ).getAllNodes() ) );
+        transaction.finish();
+    }
+
+    @Test
+    public void shouldCreateNodeWithLotsOfLabelsAndThenRemoveMostOfThem() throws Exception
+    {
+        // given
+        final int TOTAL_NUMBER_OF_LABELS = 200, NUMBER_OF_PRESERVED_LABELS = 20;
+        GraphDatabaseService db = dbRule.getGraphDatabaseService();
+        Node node;
+        {
+            Transaction tx = db.beginTx();
+            try
+            {
+                node = db.createNode();
+                for ( int i = 0; i < TOTAL_NUMBER_OF_LABELS; i++ )
+                {
+                    node.addLabel( DynamicLabel.label( "label:" + i ) );
+                }
+
+                tx.success();
+            }
+            finally
+            {
+                tx.finish();
+            }
+        }
+
+        // when
+        {
+            Transaction tx = db.beginTx();
+            try
+            {
+                for ( int i = NUMBER_OF_PRESERVED_LABELS; i < TOTAL_NUMBER_OF_LABELS; i++ )
+                {
+                    node.removeLabel( DynamicLabel.label( "label:" + i ) );
+                }
+
+                tx.success();
+            }
+            finally
+            {
+                tx.finish();
+            }
+        }
+        dbRule.clearCache();
+
+        // then
+        Transaction transaction = db.beginTx();
+        try
+        {
+            List<String> labels = new ArrayList<>();
+            for ( Label label : node.getLabels() )
+            {
+                labels.add( label.name() );
+            }
+            assertEquals( "labels on node: " + labels, NUMBER_OF_PRESERVED_LABELS, labels.size() );
+        }
+        finally
+        {
+            transaction.finish();
+        }
     }
 
     @SuppressWarnings("deprecation")

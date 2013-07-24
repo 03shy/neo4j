@@ -34,6 +34,12 @@ import org.neo4j.kernel.impl.nioneo.store.RecordStore;
 import org.neo4j.kernel.impl.nioneo.store.RelationshipRecord;
 import org.neo4j.kernel.impl.nioneo.store.RelationshipTypeTokenRecord;
 
+import static org.neo4j.consistency.report.ConsistencyReport.DynamicLabelConsistencyReport;
+
+/**
+ * Full check works by spawning StoreProcessorTasks that call StoreProcessor. StoreProcessor.applyFiltered()
+ * then scans the store and in turn calls down to store.accept which then knows how to check the given record.
+ */
 class StoreProcessor extends AbstractStoreProcessor
 {
     private final ConsistencyReport.Reporter report;
@@ -46,6 +52,7 @@ class StoreProcessor extends AbstractStoreProcessor
         this.schemaRecordCheck = null;
     }
 
+    @SuppressWarnings("UnusedParameters")
     protected void checkSchema( RecordType type, RecordStore<DynamicRecord> store, DynamicRecord schema, RecordCheck
             <DynamicRecord, ConsistencyReport.SchemaConsistencyReport> checker )
     {
@@ -74,16 +81,18 @@ class StoreProcessor extends AbstractStoreProcessor
     }
 
     @Override
-    protected void checkRelationshipTypeName( RecordStore<RelationshipTypeTokenRecord> store, RelationshipTypeTokenRecord relationshipType,
-                                              RecordCheck<RelationshipTypeTokenRecord,
-                                                      ConsistencyReport.RelationshipTypeConsistencyReport> checker )
+    protected void checkRelationshipTypeToken( RecordStore<RelationshipTypeTokenRecord> store,
+                                               RelationshipTypeTokenRecord relationshipType,
+                                               RecordCheck<RelationshipTypeTokenRecord,
+                                                       ConsistencyReport.RelationshipTypeConsistencyReport> checker )
     {
         report.forRelationshipTypeName( relationshipType, checker );
     }
 
     @Override
-    protected void checkLabelName( RecordStore<LabelTokenRecord> store, LabelTokenRecord label,
-                                   RecordCheck<LabelTokenRecord, ConsistencyReport.LabelTokenConsistencyReport> checker )
+    protected void checkLabelToken( RecordStore<LabelTokenRecord> store, LabelTokenRecord label,
+                                    RecordCheck<LabelTokenRecord, ConsistencyReport.LabelTokenConsistencyReport>
+                                            checker )
     {
         report.forLabelName( label, checker );
     }
@@ -91,7 +100,7 @@ class StoreProcessor extends AbstractStoreProcessor
     @Override
     protected void checkPropertyKeyToken( RecordStore<PropertyKeyTokenRecord> store, PropertyKeyTokenRecord key,
                                           RecordCheck<PropertyKeyTokenRecord,
-                                                  ConsistencyReport.PropertyKeyTokenConsistencyReport> checker )
+                                          ConsistencyReport.PropertyKeyTokenConsistencyReport> checker )
     {
         report.forPropertyKey( key, checker );
     }
@@ -103,6 +112,12 @@ class StoreProcessor extends AbstractStoreProcessor
         report.forDynamicBlock( type, string, checker );
     }
 
+    @Override
+    protected void checkDynamicLabel( RecordType type, RecordStore<DynamicRecord> store, DynamicRecord string,
+                                      RecordCheck<DynamicRecord, DynamicLabelConsistencyReport> checker )
+    {
+        report.forDynamicLabelBlock( type, string, checker );
+    }
 
     void setSchemaRecordCheck( SchemaRecordCheck schemaRecordCheck )
     {

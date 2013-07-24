@@ -21,19 +21,18 @@ package org.neo4j.kernel.impl.api;
 
 import java.util.Iterator;
 
+import org.junit.Test;
+
+import org.neo4j.helpers.Predicate;
+
+import static java.util.Arrays.asList;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import static org.neo4j.helpers.collection.IteratorUtil.asCollection;
-import static org.neo4j.helpers.collection.IteratorUtil.asIterator;
 import static org.neo4j.helpers.collection.IteratorUtil.asSet;
 import static org.neo4j.helpers.collection.IteratorUtil.iterator;
-
-import org.junit.Test;
-import org.neo4j.helpers.Predicate;
-import org.neo4j.helpers.collection.IteratorUtil;
-
-import static java.util.Arrays.asList;
 
 public class DiffSetsTest
 {
@@ -41,7 +40,7 @@ public class DiffSetsTest
     public void testAdd()
     {
         // GIVEN
-        DiffSets<Long> actual = new DiffSets<Long>();
+        DiffSets<Long> actual = new DiffSets<>();
 
         // WHEN
         actual.add( 1L );
@@ -56,7 +55,7 @@ public class DiffSetsTest
     public void testRemove()
     {
         // GIVEN
-        DiffSets<Long> actual = new DiffSets<Long>();
+        DiffSets<Long> actual = new DiffSets<>();
 
         // WHEN
         actual.add( 1L );
@@ -71,7 +70,7 @@ public class DiffSetsTest
     public void testAddRemove()
     {
         // GIVEN
-        DiffSets<Long> actual = new DiffSets<Long>();
+        DiffSets<Long> actual = new DiffSets<>();
 
         // WHEN
         actual.add( 1L );
@@ -86,7 +85,7 @@ public class DiffSetsTest
     public void testRemoveAdd()
     {
         // GIVEN
-        DiffSets<Long> actual = new DiffSets<Long>();
+        DiffSets<Long> actual = new DiffSets<>();
 
         // WHEN
         actual.remove( 1L );
@@ -101,7 +100,7 @@ public class DiffSetsTest
     public void testIsAddedOrRemoved()
     {
         // GIVEN
-        DiffSets<Long> actual = new DiffSets<Long>();
+        DiffSets<Long> actual = new DiffSets<>();
 
         // WHEN
         actual.add( 1L );
@@ -118,7 +117,7 @@ public class DiffSetsTest
     public void testAddRemoveAll()
     {
         // GIVEN
-        DiffSets<Long> actual = new DiffSets<Long>();
+        DiffSets<Long> actual = new DiffSets<>();
 
         // WHEN
         actual.addAll( iterator( 1L, 2L ) );
@@ -133,7 +132,7 @@ public class DiffSetsTest
     public void testFilterAdded()
     {
         // GIVEN
-        DiffSets<Long> actual = new DiffSets<Long>();
+        DiffSets<Long> actual = new DiffSets<>();
         actual.addAll( iterator( 1L, 2L ) );
         actual.removeAll( iterator( 3L, 4L ) );
 
@@ -163,7 +162,7 @@ public class DiffSetsTest
     public void testAppendAddedToSourceInApply() throws Exception
     {
         // GIVEN
-        DiffSets<Long> diffSets = new DiffSets<Long>();
+        DiffSets<Long> diffSets = new DiffSets<>();
         diffSets.add( 52l );
         diffSets.remove( 43l );
 
@@ -179,7 +178,7 @@ public class DiffSetsTest
     public void testFilterRemovedFromSourceInApply() throws Exception
     {
         // GIVEN
-        DiffSets<Long> diffSets = new DiffSets<Long>();
+        DiffSets<Long> diffSets = new DiffSets<>();
         diffSets.remove( 43l );
 
         // WHEN
@@ -194,7 +193,7 @@ public class DiffSetsTest
     public void testFilterAddedFromSourceInApply() throws Exception
     {
         // GIVEN
-        DiffSets<Long> diffSets = new DiffSets<Long>();
+        DiffSets<Long> diffSets = new DiffSets<>();
         diffSets.add( 42l );
         diffSets.add( 44l );
 

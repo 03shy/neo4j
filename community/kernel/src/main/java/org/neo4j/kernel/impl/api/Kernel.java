@@ -19,23 +19,15 @@
  */
 package org.neo4j.kernel.impl.api;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-
 import org.neo4j.graphdb.DatabaseShutdownException;
 import org.neo4j.graphdb.DependencyResolver;
 import org.neo4j.kernel.api.KernelAPI;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.api.StatementOperationParts;
-import org.neo4j.kernel.api.operations.ReadOnlyStatementState;
-import org.neo4j.kernel.api.operations.StatementState;
 import org.neo4j.kernel.impl.api.constraints.ConstraintIndexCreator;
 import org.neo4j.kernel.impl.api.index.IndexingService;
 import org.neo4j.kernel.impl.api.index.SchemaIndexProviderMap;
-import org.neo4j.kernel.impl.api.state.OldTxStateBridgeImpl;
 import org.neo4j.kernel.impl.api.state.TxState;
-import org.neo4j.kernel.impl.api.state.TxStateImpl;
 import org.neo4j.kernel.impl.core.LabelTokenHolder;
 import org.neo4j.kernel.impl.core.NodeManager;
 import org.neo4j.kernel.impl.core.PropertyKeyTokenHolder;
@@ -131,7 +123,6 @@ public class Kernel extends LifecycleAdapter implements KernelAPI
     private SchemaCache schemaCache;
     private final UpdateableSchemaState schemaState;
     private final boolean highlyAvailableInstance;
-    private final StatementStateOwners statementContextOwners = new StatementStateOwners();
     private SchemaIndexProviderMap providerMap = null;
 
     // These non-final components are all circular dependencies in various configurations.
@@ -141,8 +132,8 @@ public class Kernel extends LifecycleAdapter implements KernelAPI
     private NodeManager nodeManager;
     private PersistenceCache persistenceCache;
     private boolean isShutdown = false;
-    private StatementOperationParts statementLogic;
-    private StatementOperationParts readOnlyStatementLogic;
+    private StatementOperationParts statementOperations;
+    private StatementOperationParts readOnlyStatementOperations;
 
     public Kernel( AbstractTransactionManager transactionManager,
                    PropertyKeyTokenHolder propertyKeyTokenHolder, LabelTokenHolder labelTokenHolder,
@@ -199,10 +190,10 @@ public class Kernel extends LifecycleAdapter implements KernelAPI
     public void bootstrapAfterRecovery()
     {
             StatementOperationParts parts = newTransaction().newStatementOperations();
-            this.statementLogic = parts;
+            this.statementOperations = parts;
             
             ReadOnlyStatementOperations readOnlyParts = new ReadOnlyStatementOperations( parts.schemaStateOperations() );
-            this.readOnlyStatementLogic = parts.override(
+            this.readOnlyStatementOperations = parts.override(
                     parts.keyReadOperations(),
                     readOnlyParts,
                     parts.entityReadOperations(),
@@ -216,7 +207,6 @@ public class Kernel extends LifecycleAdapter implements KernelAPI
     @Override
     public void stop() throws Throwable
     {
-        statementContextOwners.close();
         isShutdown = true;
     }
 
@@ -250,7 +240,7 @@ public class Kernel extends LifecycleAdapter implements KernelAPI
         KernelTransaction result = new StateHandlingKernelTransaction(
                 storeTransactionContext,
                 new SchemaStorage( neoStore.getSchemaStore() ),
-                newTxState(), providerMap, persistenceCache, schemaCache,
+                transactionManager.getTransactionState(), providerMap, persistenceCache, schemaCache,
                 persistenceManager, schemaState,
                 new ConstraintIndexCreator( new Transactor( transactionManager ), indexService ),
                 propertyKeyTokenHolder, nodeManager );
@@ -271,7 +261,7 @@ public class Kernel extends LifecycleAdapter implements KernelAPI
         // TODO statementLogic is null the first call (since we're building the cake), but that's OK.
         // This is an artifact of KernelTransaction having too many responsibilities (i.e. being a transaction,
         // as well as being able to construct the layered StatementOperations cake).
-        result = new ReferenceCountingKernelTransaction( result, statementLogic != null ? statementLogic.lifecycleOperations() : null );
+        result = new ReferenceCountingKernelTransaction( result, statementOperations != null ? statementOperations.lifecycleOperations() : null );
         
         // done
         return result;
@@ -288,47 +278,12 @@ public class Kernel extends LifecycleAdapter implements KernelAPI
     @Override
     public StatementOperationParts statementOperations()
     {
-        return statementLogic;
+        return statementOperations;
     }
     
     @Override
     public StatementOperationParts readOnlyStatementOperations()
     {
-        return readOnlyStatementLogic;
-    }
-    
-    private TxState newTxState()
-    {
-        return new TxStateImpl( new OldTxStateBridgeImpl( nodeManager, transactionManager.getTransactionState() ),
-                persistenceManager, NO_ID_GENERATION );
-    }
-
-    private class StatementStateOwners extends ThreadLocal<StatementStateOwner>
-    {
-        private final Collection<StatementStateOwner> all =
-                Collections.synchronizedList( new ArrayList<StatementStateOwner>() );
-
-        @Override
-        protected StatementStateOwner initialValue()
-        {
-            StatementStateOwner owner = new StatementStateOwner( statementLogic.lifecycleOperations() )
-            {
-                @Override
-                protected StatementState createStatementState()
-                {
-                    return new ReadOnlyStatementState( new IndexReaderFactory.Caching( indexService ) );
-                }
-            };
-            all.add( owner );
-            return owner;
-        }
-
-        void close()
-        {
-            for ( StatementStateOwner owner : all )
-            {
-                owner.closeAllStatements();
-            }
-        }
+        return readOnlyStatementOperations;
     }
 }

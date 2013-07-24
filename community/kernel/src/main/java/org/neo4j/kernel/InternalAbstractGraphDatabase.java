@@ -22,7 +22,6 @@ package org.neo4j.kernel;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -54,7 +53,8 @@ import org.neo4j.graphdb.index.IndexProviders;
 import org.neo4j.graphdb.schema.Schema;
 import org.neo4j.helpers.DaemonThreadFactory;
 import org.neo4j.helpers.Function;
-import org.neo4j.helpers.Predicate;
+import org.neo4j.helpers.FunctionFromPrimitiveLong;
+import org.neo4j.helpers.PrimitiveLongPredicate;
 import org.neo4j.helpers.Service;
 import org.neo4j.helpers.Settings;
 import org.neo4j.helpers.collection.Iterables;
@@ -75,6 +75,7 @@ import org.neo4j.kernel.extension.UnsatisfiedDependencyStrategies;
 import org.neo4j.kernel.guard.Guard;
 import org.neo4j.kernel.impl.api.Kernel;
 import org.neo4j.kernel.impl.api.KernelSchemaStateStore;
+import org.neo4j.kernel.impl.api.PrimitiveLongIterator;
 import org.neo4j.kernel.impl.api.UpdateableSchemaState;
 import org.neo4j.kernel.impl.api.index.IndexDescriptor;
 import org.neo4j.kernel.impl.api.index.IndexingService;
@@ -153,8 +154,9 @@ import ch.qos.logback.classic.LoggerContext;
 import static java.lang.String.format;
 
 import static org.neo4j.helpers.Settings.setting;
-import static org.neo4j.helpers.collection.Iterables.filter;
 import static org.neo4j.helpers.collection.Iterables.map;
+import static org.neo4j.helpers.collection.IteratorUtil.filter;
+
 import static org.slf4j.impl.StaticLoggerBinder.getSingleton;
 
 /**
@@ -278,7 +280,7 @@ public abstract class InternalAbstractGraphDatabase
 
     private Map<String, CacheProvider> mapCacheProviders( Iterable<CacheProvider> cacheProviders )
     {
-        Map<String, CacheProvider> map = new HashMap<String, CacheProvider>();
+        Map<String, CacheProvider> map = new HashMap<>();
         for ( CacheProvider provider : cacheProviders )
         {
             map.put( provider.getName(), provider );
@@ -317,7 +319,8 @@ public abstract class InternalAbstractGraphDatabase
 
             shutdown();
 
-            throw new RuntimeException( throwable );
+            throw new RuntimeException( "Error starting " + getClass().getName() + ", " + storeDir.getAbsolutePath(),
+                    throwable );
         }
     }
 
@@ -346,6 +349,7 @@ public abstract class InternalAbstractGraphDatabase
         }
         
         kernelAPI.bootstrapAfterRecovery();
+        statementContextProvider.bootstrapAfterRecovery();
         if ( txManager instanceof TxManager )
         {
             NeoStoreXaDataSource neoStoreDataSource = xaDataSourceManager.getNeoStoreDataSource();
@@ -561,7 +565,7 @@ public abstract class InternalAbstractGraphDatabase
     }
 
     private Map<Object, Object> newSchemaStateMap() {
-        return new HashMap<Object, Object>();
+        return new HashMap<>();
     }
 
     protected TransactionStateFactory createTransactionStateFactory()
@@ -1002,7 +1006,7 @@ public abstract class InternalAbstractGraphDatabase
     {
         if ( id < 0 || id > MAX_RELATIONSHIP_ID )
         {
-            throw new NotFoundException( format("Relationship %d not found", id));
+            throw new NotFoundException( format( "Relationship %d not found", id ) );
         }
         return nodeManager.getRelationshipById( id );
     }
@@ -1119,7 +1123,7 @@ public abstract class InternalAbstractGraphDatabase
                                                    Iterable<KernelExtensionFactory<?>> kernelExtensions, Iterable
             <CacheProvider> cacheProviders )
     {
-        List<Class<?>> totalSettingsClasses = new ArrayList<Class<?>>();
+        List<Class<?>> totalSettingsClasses = new ArrayList<>();
 
         // Add given settings classes
         Iterables.addAll( totalSettingsClasses, settingsClasses );
@@ -1362,7 +1366,7 @@ public abstract class InternalAbstractGraphDatabase
             {
                 return type.cast( DependencyResolverImpl.this );
             }
-            return null;                                      
+            return null;
         }
         
         @Override
@@ -1371,7 +1375,9 @@ public abstract class InternalAbstractGraphDatabase
             // Try known single dependencies
             T result = resolveKnownSingleDependency( type );
             if ( result != null )
+            {
                 return selector.select( type, Iterables.option( result ) );
+            }
             
             // Try with kernel extensions
             return kernelExtensions.resolveDependency( type, selector );
@@ -1500,11 +1506,13 @@ public abstract class InternalAbstractGraphDatabase
 
         try
         {
-            IndexDescriptor indexRule = ctx.schemaReadOperations().indexesGetForLabelAndPropertyKey( state, labelId, propertyId );
+            IndexDescriptor indexRule = ctx.schemaReadOperations().indexesGetForLabelAndPropertyKey(
+                    state, labelId, propertyId );
             if ( ctx.schemaReadOperations().indexGetState( state, indexRule ) == InternalIndexState.ONLINE )
             {
                 // Ha! We found an index - let's use it to find matching nodes
-                return map2nodes( ctx.entityReadOperations().nodesGetFromIndexLookup( state, indexRule, value ), state );
+                return map2nodes( ctx.entityReadOperations().nodesGetFromIndexLookup( state, indexRule, value ),
+                        state );
             }
         }
         catch ( SchemaRuleNotFoundException e )
@@ -1522,12 +1530,12 @@ public abstract class InternalAbstractGraphDatabase
     private ResourceIterator<Node> getNodesByLabelAndPropertyWithoutIndex( final long propertyId, final Object value,
             final StatementOperationParts ctx, final StatementState state, long labelId )
     {
-        Iterator<Long> nodesWithLabel = ctx.entityReadOperations().nodesGetForLabel( state, labelId );
+        PrimitiveLongIterator nodesWithLabel = ctx.entityReadOperations().nodesGetForLabel( state, labelId );
 
-        Iterator<Long> matches = filter( new Predicate<Long>()
+        PrimitiveLongIterator matches = filter( new PrimitiveLongPredicate()
         {
             @Override
-            public boolean accept( Long item )
+            public boolean accept( long item )
             {
                 try
                 {
@@ -1543,12 +1551,12 @@ public abstract class InternalAbstractGraphDatabase
         return map2nodes( matches, state );
     }
 
-    private ResourceIterator<Node> map2nodes( Iterator<Long> input, StatementState state )
+    private ResourceIterator<Node> map2nodes( PrimitiveLongIterator input, StatementState state )
     {
-        return cleanupService.resourceIterator( map( new Function<Long, Node>()
+        return cleanupService.resourceIterator( map( new FunctionFromPrimitiveLong<Node>()
         {
             @Override
-            public Node apply( Long id )
+            public Node apply( long id )
             {
                 return getNodeById( id );
             }

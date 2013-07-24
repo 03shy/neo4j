@@ -32,10 +32,10 @@ import org.neo4j.server.database.EphemeralDatabase;
 import org.neo4j.server.enterprise.EnterpriseNeoServer;
 import org.neo4j.server.helpers.ServerBuilder;
 import org.neo4j.server.preflight.PreFlightTasks;
-import org.neo4j.tooling.Clock;
 import org.neo4j.server.rest.paging.LeaseManager;
-import org.neo4j.tooling.RealClock;
 import org.neo4j.server.rest.web.DatabaseActions;
+import org.neo4j.tooling.Clock;
+import org.neo4j.tooling.RealClock;
 
 import static org.neo4j.server.ServerTestUtils.createTempDir;
 
@@ -81,7 +81,7 @@ public class EnterpriseServerBuilder extends ServerBuilder
             {
                 return persistent ?
                         super.createDatabase() :
-                        new EphemeralDatabase( configurator.configuration() );
+                        new EphemeralDatabase( configurator );
             }
 
             @Override
@@ -89,12 +89,12 @@ public class EnterpriseServerBuilder extends ServerBuilder
             {
                 Clock clockToUse = (clock != null) ? clock : new RealClock();
 
-                return new DatabaseActions( database,
+                return new DatabaseActions(
                         new LeaseManager( clockToUse ),
                         ForceMode.forced,
                         configurator.configuration().getBoolean(
                                 Configurator.SCRIPT_SANDBOXING_ENABLED_KEY,
-                                Configurator.DEFAULT_SCRIPT_SANDBOXING_ENABLED ) );
+                                Configurator.DEFAULT_SCRIPT_SANDBOXING_ENABLED ), database.getGraph() );
             }
             
             @Override

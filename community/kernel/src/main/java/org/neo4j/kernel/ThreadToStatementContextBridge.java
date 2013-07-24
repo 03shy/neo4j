@@ -19,6 +19,10 @@
  */
 package org.neo4j.kernel;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+
 import org.neo4j.graphdb.DatabaseShutdownException;
 import org.neo4j.graphdb.NotInTransactionException;
 import org.neo4j.kernel.api.KernelAPI;
@@ -27,6 +31,7 @@ import org.neo4j.kernel.api.StatementOperations;
 import org.neo4j.kernel.api.operations.ReadOnlyStatementState;
 import org.neo4j.kernel.api.operations.StatementState;
 import org.neo4j.kernel.impl.api.IndexReaderFactory;
+import org.neo4j.kernel.impl.api.StatementStateOwner;
 import org.neo4j.kernel.impl.api.index.IndexingService;
 import org.neo4j.kernel.impl.nioneo.xa.NeoStoreXaDataSource;
 import org.neo4j.kernel.impl.transaction.AbstractTransactionManager;
@@ -43,10 +48,11 @@ import static org.neo4j.kernel.impl.transaction.XaDataSourceManager.neoStoreList
  */
 public class ThreadToStatementContextBridge extends LifecycleAdapter
 {
-    final KernelAPI kernelAPI;
+    private final XaDataSourceManager xaDataSourceManager;
+    private StatementStateOwners statementStateOwners;
+    protected final KernelAPI kernelAPI;
     private final AbstractTransactionManager txManager;
     private boolean isShutdown = false;
-    private final XaDataSourceManager xaDataSourceManager;
     private IndexingService indexingService;
 
     public ThreadToStatementContextBridge( KernelAPI kernelAPI, AbstractTransactionManager txManager,
@@ -60,7 +66,8 @@ public class ThreadToStatementContextBridge extends LifecycleAdapter
     @Override
     public void start() throws Throwable
     {
-        xaDataSourceManager.addDataSourceRegistrationListener( neoStoreListener( new DataSourceRegistrationListener.Adapter()
+        xaDataSourceManager.addDataSourceRegistrationListener(
+                neoStoreListener( new DataSourceRegistrationListener.Adapter()
         {
             @Override
             public void registeredDataSource( XaDataSource ds )
@@ -68,6 +75,12 @@ public class ThreadToStatementContextBridge extends LifecycleAdapter
                 indexingService = ((NeoStoreXaDataSource)ds).getIndexService();
             }
         } ) );
+    }
+    
+    public void bootstrapAfterRecovery()
+    {
+        statementStateOwners = new StatementStateOwners(
+                kernelAPI.readOnlyStatementOperations(), indexingService );
     }
     
     public StatementOperationParts getCtxForReading()
@@ -79,20 +92,21 @@ public class ThreadToStatementContextBridge extends LifecycleAdapter
     {
         return kernelAPI.statementOperations();
     }
-    
+
     public StatementState statementForReading()
     {
-        StatementState statement = newStatementIfInTx();
-        if ( statement != null )
-        {
-            return statement;
-        }
-        return new ReadOnlyStatementState( new IndexReaderFactory.Caching( indexingService ) );
+        return statementForReadingAndWriting();
     }
-    
+
     public StatementState statementForWriting()
     {
-        StatementState statement = newStatementIfInTx();
+        return statementForReadingAndWriting();
+    }
+
+    private StatementState statementForReadingAndWriting()
+    {
+        checkIfShutdown();
+        StatementState statement = txManager.newStatement();
         if ( statement != null )
         {
             return statement;
@@ -100,15 +114,10 @@ public class ThreadToStatementContextBridge extends LifecycleAdapter
         throw new NotInTransactionException();
     }
 
-    private StatementState newStatementIfInTx()
-    {
-        checkIfShutdown();
-        return txManager.newStatement();
-    }
-
     @Override
     public void shutdown() throws Throwable
     {
+        statementStateOwners.close();
         isShutdown = true;
     }
 
@@ -119,7 +128,12 @@ public class ThreadToStatementContextBridge extends LifecycleAdapter
             throw new DatabaseShutdownException();
         }
     }
-    
+
+    public void assertInTransaction()
+    {
+        txManager.assertInTransaction();
+    }
+
     public static class ReadOnly extends ThreadToStatementContextBridge
     {
         public ReadOnly( KernelAPI kernelAPI, AbstractTransactionManager txManager,
@@ -138,6 +152,43 @@ public class ThreadToStatementContextBridge extends LifecycleAdapter
         public StatementOperationParts getCtxForReading()
         {
             return kernelAPI.readOnlyStatementOperations();
+        }
+    }
+
+    private static class StatementStateOwners extends ThreadLocal<StatementStateOwner>
+    {
+        private final Collection<StatementStateOwner> all =
+                Collections.synchronizedList( new ArrayList<StatementStateOwner>() );
+        private final StatementOperationParts statementOperations;
+        private final IndexingService indexingService;
+
+        public StatementStateOwners( StatementOperationParts statementOperations, IndexingService indexingService )
+        {
+            this.statementOperations = statementOperations;
+            this.indexingService = indexingService;
+        }
+
+        @Override
+        protected StatementStateOwner initialValue()
+        {
+            StatementStateOwner owner = new StatementStateOwner( statementOperations.lifecycleOperations() )
+            {
+                @Override
+                protected StatementState createStatementState()
+                {
+                    return new ReadOnlyStatementState( new IndexReaderFactory.Caching( indexingService ) );
+                }
+            };
+            all.add( owner );
+            return owner;
+        }
+
+        void close()
+        {
+            for ( StatementStateOwner owner : all )
+            {
+                owner.closeAllStatements();
+            }
         }
     }
 }

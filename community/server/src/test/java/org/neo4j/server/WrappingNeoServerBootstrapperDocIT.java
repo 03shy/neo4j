@@ -29,7 +29,6 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
-
 import org.neo4j.graphdb.factory.GraphDatabaseFactory;
 import org.neo4j.helpers.Settings;
 import org.neo4j.jmx.Primitives;
@@ -189,6 +188,7 @@ public class WrappingNeoServerBootstrapperDocIT extends ExclusiveServerTestBase
         srv.stop();
 
         // Should be able to still talk to the db
+        myDb.beginTx();
         assertTrue( myDb.getReferenceNode() != null );
     }
 }

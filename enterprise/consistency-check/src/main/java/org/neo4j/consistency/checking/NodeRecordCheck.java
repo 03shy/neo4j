@@ -20,17 +20,13 @@
 package org.neo4j.consistency.checking;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
 
 import org.neo4j.consistency.report.ConsistencyReport;
 import org.neo4j.consistency.store.DiffRecordAccess;
 import org.neo4j.consistency.store.RecordAccess;
 import org.neo4j.consistency.store.RecordReference;
-import org.neo4j.kernel.impl.nioneo.store.AbstractDynamicStore;
-import org.neo4j.kernel.impl.nioneo.store.DynamicArrayStore;
 import org.neo4j.kernel.impl.nioneo.store.DynamicRecord;
 import org.neo4j.kernel.impl.nioneo.store.LabelTokenRecord;
 import org.neo4j.kernel.impl.nioneo.store.NodeRecord;
@@ -40,6 +36,12 @@ import org.neo4j.kernel.impl.nioneo.store.RelationshipRecord;
 import org.neo4j.kernel.impl.nioneo.store.labels.DynamicNodeLabels;
 import org.neo4j.kernel.impl.nioneo.store.labels.NodeLabels;
 import org.neo4j.kernel.impl.nioneo.store.labels.NodeLabelsField;
+
+import static java.util.Arrays.copyOfRange;
+import static java.util.Arrays.sort;
+
+import static org.neo4j.kernel.impl.nioneo.store.AbstractDynamicStore.readFullByteArrayFromHeavyRecords;
+import static org.neo4j.kernel.impl.nioneo.store.DynamicArrayStore.getRightArray;
 
 class NodeRecordCheck extends PrimitiveRecordCheck<NodeRecord, ConsistencyReport.NodeConsistencyReport>
 {
@@ -153,7 +155,7 @@ class NodeRecordCheck extends PrimitiveRecordCheck<NodeRecord, ConsistencyReport
                 {
                     report.forReference( records.label( (int) labelId ), this );
                 }
-                Arrays.sort( labelIds );
+                sort( labelIds );
                 for ( int i = 1; i < labelIds.length; i++ )
                 {
                     if ( labelIds[i - 1] == labelIds[i] )
@@ -190,33 +192,43 @@ class NodeRecordCheck extends PrimitiveRecordCheck<NodeRecord, ConsistencyReport
             class NodeLabelsComparativeRecordChecker implements
                     ComparativeRecordChecker<NodeRecord, DynamicRecord, ConsistencyReport.NodeConsistencyReport>
             {
+                private HashMap<Long, DynamicRecord> recordIds = new HashMap<>();
                 private List<DynamicRecord> recordList = new ArrayList<>();
-                private Set<Long> recordIds = new HashSet<>();
+                private boolean allInUse = true;
 
                 @Override
                 public void checkReference( NodeRecord record, DynamicRecord dynamicRecord,
                                             ConsistencyReport.NodeConsistencyReport report, RecordAccess records )
                 {
-                    if ( !dynamicRecord.inUse() )
+                    recordIds.put( dynamicRecord.getId(), dynamicRecord );
+
+                    if ( dynamicRecord.inUse() )
                     {
+                        if ( allInUse )
+                        {
+                            recordList.add( dynamicRecord );
+                        }
+                    }
+                    else
+                    {
+                        allInUse = false;
                         report.dynamicLabelRecordNotInUse( dynamicRecord );
                     }
-
-                    long id = dynamicRecord.getId();
-
-                    recordList.add( dynamicRecord );
-                    recordIds.add( id );
 
                     long nextBlock = dynamicRecord.getNextBlock();
                     if ( Record.NO_NEXT_BLOCK.is( nextBlock ) )
                     {
-                        validateLabelIds( labelIds(recordList), report, records );
+                        if ( allInUse )
+                        {
+                            // only validate label ids if all dynamic records seen were in use
+                            validateLabelIds( labelIds( recordList ), report, records );
+                        }
                     }
                     else
                     {
-                        if ( recordIds.contains( nextBlock ) )
+                        if ( recordIds.containsKey( nextBlock ) )
                         {
-                            report.cyclicDynamicLabelRecords( dynamicRecord );
+                            report.dynamicRecordChainCycle( recordIds.get( nextBlock ) );
                         }
                         else
                         {
@@ -227,8 +239,9 @@ class NodeRecordCheck extends PrimitiveRecordCheck<NodeRecord, ConsistencyReport
 
                 private long[] labelIds( List<DynamicRecord> recordList )
                 {
-                    return (long[]) DynamicArrayStore.getRightArray( AbstractDynamicStore
-                            .readFullByteArrayFromHeavyRecords( recordList, PropertyType.ARRAY ) );
+                    long[] idArray =
+                        (long[]) getRightArray( readFullByteArrayFromHeavyRecords( recordList, PropertyType.ARRAY ) );
+                    return copyOfRange( idArray, 1, idArray.length );
                 }
             }
         }
